@@ -1,9 +1,12 @@
+from flask import Flask
 from pyrogram import Client, filters
 import re
-import requests
+import threading
 from config import API_ID, API_HASH, BOT_TOKEN
 
-app = Client(
+app = Flask(__name__)
+
+bot = Client(
     "BypassBot",
     api_id=API_ID,
     api_hash=API_HASH,
@@ -13,45 +16,34 @@ app = Client(
 URL_REGEX = r"(https?://[^\s]+)"
 
 def bypass_url(url):
-    # Placeholder for bypass logic
-    return url
+    return url  # placeholder
 
-@app.on_message(filters.private & filters.command("start"))
+@app.route("/")
+def home():
+    return "Bot is running"
+
+@bot.on_message(filters.private & filters.command("start"))
 async def start(_, message):
     await message.reply_text(
-        "👋 Welcome!\n\n"
-        "Send me a supported shortlink and I'll try to bypass it."
+        "👋 Welcome!\nSend me a link."
     )
 
-@app.on_message(filters.private & filters.text)
+@bot.on_message(filters.private & filters.text)
 async def bypass(_, message):
     match = re.search(URL_REGEX, message.text)
 
     if not match:
-        await message.reply_text("❌ Please send a valid URL.")
+        await message.reply_text("❌ Invalid URL")
         return
 
     url = match.group(0)
+    final = bypass_url(url)
 
-    try:
-        final = bypass_url(url)
+    await message.reply_text(f"Bypassed:\n{final}")
 
-        text = f"""
-**Original Link**
-{url}
+def run_bot():
+    bot.run()
 
-**Bypassed Link**
-{final}
+threading.Thread(target=run_bot).start()
 
-⏱ Time Taken: Instant
-"""
-
-        await message.reply_text(
-            text,
-            disable_web_page_preview=True
-        )
-
-    except Exception as e:
-        await message.reply_text(f"❌ Error:\n`{e}`")
-
-app.run()
+app.run(host="0.0.0.0", port=10000)
