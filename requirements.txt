@@ -1,1 +1,7 @@
-
+pyrogram
+tgcrypto
+requests
+beautifulsoup4
+lxml
+python-dotenv
+cloudscraper
