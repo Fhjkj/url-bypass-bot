@@ -2,6 +2,7 @@ from flask import Flask
 from pyrogram import Client, filters
 import re
 import os
+import requests 
 
 app = Flask(__name__)
 
@@ -28,9 +29,22 @@ async def start(_, message):
 
 @bot.on_message(filters.private & filters.text)
 async def handler(_, message):
-    match = re.search(URL_REGEX, message.text)
-    if match:
-        await message.reply(match.group(0))
+    links = re.findall(URL_REGEX, message.text)
+
+    if not links:
+        return
+
+    for link in links:
+        try:
+            r = requests.get(
+                link,
+                allow_redirects=True,
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
+            await message.reply(r.url)
+        except:
+            await message.reply(link)
 
 if __name__ == "__main__":
     from threading import Thread
