@@ -2,6 +2,7 @@ pyrogram
 tgcrypto
 requests
 beautifulsoup4
-cloudscraper
-python-dotenv
 lxml
+python-dotenv
+cloudscraper
+flask
