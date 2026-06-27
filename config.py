@@ -4,7 +4,7 @@ def must_get(name):
     value = os.getenv(name)
     if not value:
         raise ValueError(f"Missing env var: {name}")
-    return value
+    return value.strip()
 
 API_ID = int(must_get("API_ID"))
 API_HASH = must_get("API_HASH")
