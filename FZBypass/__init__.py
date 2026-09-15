@@ -40,7 +40,6 @@ class Config:
     KATDRIVE_CRYPT = getenv("KATDRIVE_CRYPT", "")
     TERA_COOKIE = getenv("TERA_COOKIE", "")
     START_IMAGE = getenv("START_IMAGE", "start_banner.jpg")
-    CHANNEL_URL = getenv("CHANNEL_URL", "https://t.me/nickupdates")
 
 
 Bypass = Client(

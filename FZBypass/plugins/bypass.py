@@ -2,6 +2,7 @@ from time import time
 from html import escape
 from pathlib import Path
 from asyncio import create_task, gather, sleep as asleep
+from pyrogram import filters
 from pyrogram.filters import command, user
 from pyrogram.types import (
     InlineKeyboardButton,
@@ -21,7 +22,7 @@ from FZBypass.core.bot_utils import AuthChatsTopics, convert_time, BypassFilter
 async def start_msg(client, message):
     caption = "🌺 <b>Hey, I'm A Bypasser Bot Specially Coded For <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a> ✅</b>"
     keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Channel", url=Config.CHANNEL_URL)]]
+        [[InlineKeyboardButton("Channel", callback_data="start_channel_placeholder")]]
     )
     image_path = Path(Config.START_IMAGE)
     if image_path.is_file():
@@ -33,6 +34,11 @@ async def start_msg(client, message):
         )
     else:
         await message.reply(caption, quote=True, reply_markup=keyboard)
+
+
+@Bypass.on_callback_query(filters.regex("^start_channel_placeholder$"))
+async def channel_placeholder(_, query):
+    await query.answer()
 
 
 @Bypass.on_message(BypassFilter & (user(Config.OWNER_ID) | AuthChatsTopics))
