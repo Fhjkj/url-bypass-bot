@@ -1,4 +1,5 @@
 from time import time
+from html import escape
 from asyncio import create_task, gather, sleep as asleep
 from pyrogram.filters import command, user
 from pyrogram.types import (
@@ -75,47 +76,47 @@ async def bypass_check(client, message):
 
     parse_data = []
     for result, link in zip(completed_tasks, tlinks):
+        source = escape(str(link))
         if isinstance(result, Exception):
-            bp_link = f"\n┖ <b>Bypass Error:</b> {result}"
-        elif is_excep_link(link):
-            bp_link = result
+            bypassed = f"❌ {escape(str(result))}"
         elif isinstance(result, list):
-            bp_link, ui = "", "┖"
-            for ind, lplink in reversed(list(enumerate(result, start=1))):
-                bp_link = f"\n{ui} <b>{ind}x Bypass Link:</b> {lplink}" + bp_link
-                ui = "┠"
+            links = [str(item) for item in result]
+            bypassed = "\n".join(f"✅ {escape(item)}" for item in links)
+        elif is_excep_link(link):
+            bypassed = escape(str(result))
         else:
-            bp_link = f"\n┖ <b>Bypass Link:</b> {result}"
-
-        if is_excep_link(link):
-            parse_data.append(f"{bp_link}\n\n━━━━━━━✦✗✦━━━━━━━\n\n")
-        else:
-            parse_data.append(
-                f"┎ <b>Source Link:</b> {link}{bp_link}\n\n━━━━━━━✦✗✦━━━━━━━\n\n"
-            )
+            bypassed = f"✅ {escape(str(result))}"
+        parse_data.append((source, bypassed))
 
     end = time()
-
-    if len(parse_data) != 0:
-        parse_data[-1] = (
-            parse_data[-1]
-            + f"┎ <b>Total Links : {no}</b>\n┠ <b>Results In <code>{convert_time(end - start)}</code></b> !\n┖ <b>By </b>{message.from_user.mention} ( #ID{message.from_user.id} )"
+    elapsed = convert_time(end - start)
+    cards = []
+    for source, bypassed in parse_data:
+        cards.append(
+            "<blockquote>"
+            f"-\n<code>/bypass {source}</code>\n\n"
+            "<b>Original Link : </b>💬\n"
+            f"✅ {source}\n"
+            "<b>Bypassed Link : </b>💬\n"
+            f"{bypassed}\n"
+            f"<b>Time Taken : {escape(elapsed)}</b> 💬\n\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "<b>Powered By <a href=\"https://t.me/Nick_Bypass_Bot\">@Nick_Bypass_Bot</a></b> 💬"
+            "</blockquote>"
         )
-    tg_txt = "━━━━━━━✦✗✦━━━━━━━\n\n"
-    for tg_data in parse_data:
-        tg_txt += tg_data
-        if len(tg_txt) > 4000:
-            await wait_msg.edit(tg_txt, disable_web_page_preview=True)
-            wait_msg = await message.reply(
-                "<i>Fetching...</i>", reply_to_message_id=wait_msg.id
-            )
-            tg_txt = ""
-            await asleep(2.5)
-
-    if tg_txt != "":
+    tg_txt = "\n\n".join(cards)
+    if tg_txt:
+        tg_txt += f"\n\n<code>Total Links: {no}</code>"
+    if len(tg_txt) > 4000:
+        chunks = [tg_txt[index : index + 3900] for index in range(0, len(tg_txt), 3900)]
+        await wait_msg.edit(chunks[0], disable_web_page_preview=True)
+        for chunk in chunks[1:]:
+            wait_msg = await message.reply(chunk, reply_to_message_id=wait_msg.id)
+            await asleep(0.5)
+    elif tg_txt:
         await wait_msg.edit(tg_txt, disable_web_page_preview=True)
     else:
-        await wait_msg.delete()
+        await wait_msg.edit("<i>No links found.</i>")
 
 
 @Bypass.on_message(command("log") & user(Config.OWNER_ID))
