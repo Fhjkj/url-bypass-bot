@@ -97,13 +97,13 @@ async def bypass_check(client, message):
         cards.append(
             "<blockquote>-\n"
             f"/bypass <a href=\"{source}\">{source}</a></blockquote>\n"
-            "<blockquote><b>Original Link : </b>💬</blockquote>\n"
+            "<blockquote><b>Original Link : </b>❞</blockquote>\n"
             f"<blockquote>✅ <a href=\"{source}\">{source}</a></blockquote>\n"
-            "<blockquote><b>Bypassed Link : </b>💬</blockquote>\n"
+            "<blockquote><b>Bypassed Link : </b>❞</blockquote>\n"
             f"<blockquote>{bypassed}</blockquote>\n"
-            f"<blockquote><b>Time Taken : {escape(elapsed)}</b> 💬</blockquote>\n\n"
+            f"<blockquote><b>Time Taken : {escape(elapsed)}</b> ❞</blockquote>\n\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
-            "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> 💬</blockquote>"
+            "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> ❞</blockquote>"
         )
     tg_txt = "\n\n".join(cards)
     if len(tg_txt) > 4000:
