@@ -77,7 +77,7 @@ async def bypass_check(client, message):
             links = [str(item) for item in result]
             bypassed = "\n".join(f"✅ <a href=\"{escape(item, quote=True)}\">{escape(item)}</a>" for item in links)
         elif is_excep_link(link):
-            bypassed = escape(str(result), quote=True)
+            bypassed = str(result)
         else:
             result_text = escape(str(result), quote=True)
             bypassed = f"✅ <a href=\"{result_text}\">{result_text}</a>"
@@ -98,8 +98,6 @@ async def bypass_check(client, message):
             "<b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> 💬"
         )
     tg_txt = "\n\n".join(cards)
-    if tg_txt:
-        tg_txt += f"\n\n<code>Total Links: {no}</code>"
     if len(tg_txt) > 4000:
         chunks = [tg_txt[index : index + 3900] for index in range(0, len(tg_txt), 3900)]
         await wait_msg.edit(chunks[0], disable_web_page_preview=True)
