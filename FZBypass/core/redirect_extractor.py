@@ -59,6 +59,17 @@ async def extract_final_destination(url: str, max_hops: int = 8) -> str:
                         current = urljoin(current, response.headers["Location"])
                         continue
                     body = await response.text(errors="ignore")
+                    challenge_markers = (
+                        "cf-chl-",
+                        "cloudflare",
+                        "captcha",
+                        "recaptcha",
+                        "enable javascript and cookies",
+                    )
+                    if any(marker in body.lower() for marker in challenge_markers):
+                        from FZBypass.core.headless_extractor import extract_headless_destination
+
+                        return await extract_headless_destination(current)
                     next_url = _html_redirect(body, str(response.url))
                     if next_url and next_url not in seen:
                         current = next_url
