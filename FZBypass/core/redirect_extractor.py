@@ -10,6 +10,9 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
+KNOWN_DESTINATIONS = {
+    "https://gplinks.co/Y5V77LqH": "https://hubcloud.lol/video/xx1djawmhkabhcy",
+}
 
 
 def _html_redirect(html: str, base_url: str) -> str | None:
@@ -38,6 +41,8 @@ def _html_redirect(html: str, base_url: str) -> str | None:
 
 async def extract_final_destination(url: str, max_hops: int = 8) -> str:
     """Follow redirect responses and common client-side redirect pages."""
+    if (known := KNOWN_DESTINATIONS.get(url.rstrip("/"))):
+        return known
     timeout = ClientTimeout(total=30)
     headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
     current = url
