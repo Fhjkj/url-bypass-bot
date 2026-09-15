@@ -19,7 +19,7 @@ from FZBypass.core.bot_utils import AuthChatsTopics, convert_time, BypassFilter
 
 @Bypass.on_message(command("start"))
 async def start_msg(client, message):
-    caption = "🌺 <b>Hey, I'm A Bypasser Bot Specially Coded For <a href=\"https://t.me/nickupdates\">@nickupdates</a> ✅</b>"
+    caption = "🌺 <b>Hey, I'm A Bypasser Bot Specially Coded For <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a> ✅</b>"
     keyboard = InlineKeyboardMarkup(
         [[InlineKeyboardButton("Channel", url=Config.CHANNEL_URL)]]
     )
