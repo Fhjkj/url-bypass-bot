@@ -3,6 +3,7 @@ bs4
 cfscrape
 cloudscraper
 curl_cffi
+flask
 lxml
 httpx
 python-dotenv
