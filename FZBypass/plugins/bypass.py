@@ -11,6 +11,7 @@ from pyrogram.types import (
     InputTextMessageContent,
 )
 from pyrogram.enums import MessageEntityType
+from pyrogram.enums import ParseMode
 from pyrogram.errors import QueryIdInvalid
 
 from FZBypass import Config, Bypass, BOT_START
@@ -95,11 +96,11 @@ async def bypass_check(client, message):
     for source, bypassed in parse_data:
         cards.append(
             "<blockquote>-\n"
-            f"/bypass <a href=\"{source}\">{source}</a></blockquote>"
-            "<blockquote><b>Original Link : </b>💬</blockquote>"
-            f"<blockquote>✅ <a href=\"{source}\">{source}</a></blockquote>"
-            "<blockquote><b>Bypassed Link : </b>💬</blockquote>"
-            f"<blockquote>{bypassed}</blockquote>"
+            f"/bypass <a href=\"{source}\">{source}</a></blockquote>\n"
+            "<blockquote><b>Original Link : </b>💬</blockquote>\n"
+            f"<blockquote>✅ <a href=\"{source}\">{source}</a></blockquote>\n"
+            "<blockquote><b>Bypassed Link : </b>💬</blockquote>\n"
+            f"<blockquote>{bypassed}</blockquote>\n"
             f"<blockquote><b>Time Taken : {escape(elapsed)}</b> 💬</blockquote>\n\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> 💬</blockquote>"
@@ -107,12 +108,12 @@ async def bypass_check(client, message):
     tg_txt = "\n\n".join(cards)
     if len(tg_txt) > 4000:
         chunks = [tg_txt[index : index + 3900] for index in range(0, len(tg_txt), 3900)]
-        await wait_msg.edit(chunks[0], disable_web_page_preview=True)
+        await wait_msg.edit(chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         for chunk in chunks[1:]:
-            wait_msg = await message.reply(chunk, reply_to_message_id=wait_msg.id)
+            wait_msg = await message.reply(chunk, reply_to_message_id=wait_msg.id, parse_mode=ParseMode.HTML)
             await asleep(0.5)
     elif tg_txt:
-        await wait_msg.edit(tg_txt, disable_web_page_preview=True)
+        await wait_msg.edit(tg_txt, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     else:
         await wait_msg.edit("<i>No links found.</i>")
 
