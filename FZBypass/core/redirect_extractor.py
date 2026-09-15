@@ -70,6 +70,8 @@ async def extract_final_destination(url: str, max_hops: int = 8) -> str:
                             "Final destination not exposed; shortener ended at an advertisement"
                         )
                     return final_url
+            except DDLException:
+                raise
             except Exception as error:
                 raise DDLException(f"Redirect extraction failed: {error.__class__.__name__}") from error
     hostname = (urljoin(current, "/").split("/")[2] or "").lower()
