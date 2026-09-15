@@ -13,6 +13,7 @@ USER_AGENT = (
 KNOWN_DESTINATIONS = {
     "https://gplinks.co/Y5V77LqH": "https://hubcloud.lol/video/xx1djawmhkabhcy",
     "https://arolinks.com/Ambhq": "https://telegram.me/KPSMirrorXBot?start=NDYyYjQyZTctODAwNS00MWMxLTk0MzctNGVkN2RhYmFlODM1JiY5MTg1NzcwNDA=",
+    "https://vplink.in/kYy5": "https://t.me/AnandxRestrictionbot?start=D0cy19LZ",
 }
 
 

@@ -396,6 +396,8 @@ async def direct_link_checker(link, onlylink=False):
         blink = await extract_final_destination(link)
     elif bool(match(r"https?:\/\/(?:www\.)?gplinks\.co\/\S+", link)):
         blink = await extract_final_destination(link)
+    elif bool(match(r"https?:\/\/(?:www\.)?vplink\.in\/\S+", link)):
+        blink = await extract_final_destination(link)
 
     # DL Sites
     elif bool(match(r"https?:\/\/cinevood\.\S+", link)):
