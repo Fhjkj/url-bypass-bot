@@ -6,6 +6,7 @@ from FZBypass.core.bypass_ddl import *
 from FZBypass.core.bypass_scrape import *
 from FZBypass.core.bot_utils import get_dl
 from FZBypass.core.exceptions import DDLException
+from FZBypass.core.redirect_extractor import extract_final_destination
 
 fmed_list = [
     "fembed.net",
@@ -391,6 +392,8 @@ async def direct_link_checker(link, onlylink=False):
         blink = await justpaste(link)
     elif bool(match(r"https?:\/\/linksxyz\.\S+", link)):
         blink = await linksxyz(link)
+    elif bool(match(r"https?:\/\/(?:www\.)?arolinks\.com\/\S+", link)):
+        blink = await extract_final_destination(link)
 
     # DL Sites
     elif bool(match(r"https?:\/\/cinevood\.\S+", link)):
