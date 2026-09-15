@@ -1,5 +1,6 @@
 from time import time
 from html import escape
+from pathlib import Path
 from asyncio import create_task, gather, sleep as asleep
 from pyrogram.filters import command, user
 from pyrogram.types import (
@@ -18,27 +19,20 @@ from FZBypass.core.bot_utils import AuthChatsTopics, convert_time, BypassFilter
 
 @Bypass.on_message(command("start"))
 async def start_msg(client, message):
-    await message.reply(
-        f"""<b><i>FZ Bypass Bot!</i></b>
-    
-    <i>A Powerful Elegant Multi Threaded Bot written in Python... which can Bypass Various Shortener Links, Scrape links, and More ... </i>
-    
-    <i><b>Bot Started {convert_time(time() - BOT_START)} ago...</b></i>
-
-🛃 <b>Use Me Here :</b> @CyberPunkGrp <i>(Bypass Topic)</i>""",
-        quote=True,
-        reply_markup=InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("🎓 Dev", url="https://t.me/SilentDemonSD"),
-                    InlineKeyboardButton(
-                        "🔍 Deploy Own",
-                        url="https://github.com/SilentDemonSD/FZBypassBot",
-                    ),
-                ]
-            ]
-        ),
+    caption = "🌺 <b>Hey, I'm A Bypasser Bot Specially Coded For <a href=\"https://t.me/nickupdates\">@nickupdates</a> ✅</b>"
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Channel", url=Config.CHANNEL_URL)]]
     )
+    image_path = Path(Config.START_IMAGE)
+    if image_path.is_file():
+        await message.reply_photo(
+            photo=str(image_path),
+            caption=caption,
+            quote=True,
+            reply_markup=keyboard,
+        )
+    else:
+        await message.reply(caption, quote=True, reply_markup=keyboard)
 
 
 @Bypass.on_message(BypassFilter & (user(Config.OWNER_ID) | AuthChatsTopics))
