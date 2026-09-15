@@ -19,7 +19,8 @@ def health():
 
 
 if __name__ == "__main__":
-    Thread(target=lambda: app.run(host="0.0.0.0", port=10000, use_reloader=False), daemon=True).start()
+    port = int(os.getenv("PORT", "10000"))
+    Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False), daemon=True).start()
     Bypass.start()
     idle()
     Bypass.stop()

@@ -22,8 +22,19 @@ pip install -r requirements.txt
 python bot.py
 ```
 
-The Flask health server listens on port `10000` by default. The Telegram bot runs in the same process.
+The Flask health server listens on Render’s `$PORT` (falling back to `10000` locally). The Telegram bot runs in the same process.
 
 ## Attribution
 
 The bypass engine is reused under the MIT License from Silent Demon SD (MysterySD). See `LICENSE`.
+
+
+## Render deployment
+
+Create a Render **Web Service** using this repository, or use the included `render.yaml` Blueprint. Render should use the Python runtime with:
+
+- Build command: `pip install -r requirements.txt`
+- Start command: `python bot.py`
+- Health path: `/health`
+
+Add the Telegram credentials and access settings as Render environment variables. Do not commit secrets to the repository.
