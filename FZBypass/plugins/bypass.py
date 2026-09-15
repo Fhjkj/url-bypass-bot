@@ -70,33 +70,32 @@ async def bypass_check(client, message):
 
     parse_data = []
     for result, link in zip(completed_tasks, tlinks):
-        source = escape(str(link))
+        source = escape(str(link), quote=True)
         if isinstance(result, Exception):
-            bypassed = f"❌ {escape(str(result))}"
+            bypassed = f"❌ {escape(str(result), quote=True)}"
         elif isinstance(result, list):
             links = [str(item) for item in result]
-            bypassed = "\n".join(f"✅ {escape(item)}" for item in links)
+            bypassed = "\n".join(f"✅ <a href=\"{escape(item, quote=True)}\">{escape(item)}</a>" for item in links)
         elif is_excep_link(link):
-            bypassed = escape(str(result))
+            bypassed = escape(str(result), quote=True)
         else:
-            bypassed = f"✅ {escape(str(result))}"
+            result_text = escape(str(result), quote=True)
+            bypassed = f"✅ <a href=\"{result_text}\">{result_text}</a>"
         parse_data.append((source, bypassed))
 
     end = time()
-    elapsed = convert_time(end - start)
+    elapsed = f"{end - start:.0f} seconds"
     cards = []
     for source, bypassed in parse_data:
         cards.append(
-            "<blockquote>"
-            f"-\n<code>/bypass {source}</code>\n\n"
+            f"-\n/bypass <a href=\"{source}\">{source}</a>\n\n"
             "<b>Original Link : </b>💬\n"
             f"✅ {source}\n"
             "<b>Bypassed Link : </b>💬\n"
             f"{bypassed}\n"
             f"<b>Time Taken : {escape(elapsed)}</b> 💬\n\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
-            "<b>Powered By <a href=\"https://t.me/Nick_Bypass_Bot\">@Nick_Bypass_Bot</a></b> 💬"
-            "</blockquote>"
+            "<b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> 💬"
         )
     tg_txt = "\n\n".join(cards)
     if tg_txt:
