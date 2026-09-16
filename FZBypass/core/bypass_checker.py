@@ -10,6 +10,7 @@ from FZBypass.core.redirect_extractor import extract_final_destination
 from FZBypass.core.publisher_chain import resolve_publisher_chain
 from FZBypass.core.dotflix import dotflix
 from FZBypass.core.dotflix import DotflixResult
+from FZBypass.core.gofile import gofile, GofileResult
 
 fmed_list = [
     "fembed.net",
@@ -403,6 +404,8 @@ async def direct_link_checker(link, onlylink=False):
         blink = await resolve_publisher_chain(link)
     elif bool(match(r"https?:\/\/(?:www\.)?(?:dotflix\.store|dtflix\.ink)\/share\/\S+", link)):
         blink = await dotflix(link)
+    elif bool(match(r"https?:\/\/(?:www\.)?gofile\.io\/d\/\S+", link)):
+        blink = await gofile(link)
     elif bool(match(r"https?:\/\/(?:www\.)?gplinks\.co\/\S+", link)):
         blink = await extract_final_destination(link)
     elif bool(match(r"https?:\/\/(?:www\.)?vplink\.in\/\S+", link)):
@@ -449,7 +452,7 @@ async def direct_link_checker(link, onlylink=False):
             f"<i>No Bypass Function Found for your Link :</i> <code>{link}</code>"
         )
 
-    if onlylink or isinstance(blink, DotflixResult):
+    if onlylink or isinstance(blink, (DotflixResult, GofileResult)):
         return blink
 
     links = []

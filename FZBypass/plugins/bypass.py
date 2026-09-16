@@ -17,6 +17,7 @@ from pyrogram.errors import QueryIdInvalid
 from FZBypass import Config, Bypass, BOT_START
 from FZBypass.core.bypass_checker import direct_link_checker, is_excep_link
 from FZBypass.core.dotflix import DotflixResult
+from FZBypass.core.gofile import GofileResult
 from FZBypass.core.bot_utils import AuthChatsTopics, convert_time, BypassFilter
 
 
@@ -81,6 +82,19 @@ async def bypass_check(client, message):
         source = escape(str(link), quote=True)
         if isinstance(result, Exception):
             bypassed = f"❌ {escape(str(result), quote=True)}"
+        elif isinstance(result, GofileResult):
+            filename = escape(result.filename, quote=True)
+            total_size = escape(result.total_size, quote=True)
+            download_links = " | ".join(
+                f'<a href="{escape(url, quote=True)}">{escape(label)}</a>'
+                for label, url in result.links
+            )
+            bypassed = (
+                f"📚 <b>File Name :-</b> {filename}\n"
+                f"│\n├ 💾 <b>Total Size :-</b> {total_size}\n"
+                f"│\n├ 🧩 <b>Files :-</b> {result.file_count}\n"
+                f"│\n└ 🔗 <b>Links :-</b> {download_links}"
+            )
         elif isinstance(result, DotflixResult):
             filename = escape(result.filename, quote=True)
             size = escape(result.size, quote=True)
@@ -101,15 +115,17 @@ async def bypass_check(client, message):
         else:
             result_text = escape(str(result), quote=True)
             bypassed = f"✅ <a href=\"{result_text}\">{result_text}</a>"
-        parse_data.append((source, bypassed, isinstance(result, DotflixResult)))
+        card_kind = "gofile" if isinstance(result, GofileResult) else "dotflix" if isinstance(result, DotflixResult) else ""
+        parse_data.append((source, bypassed, card_kind))
 
     end = time()
     elapsed = f"{end - start:.0f} seconds"
     cards = []
-    for source, bypassed, is_dotflix in parse_data:
-        if is_dotflix:
+    for source, bypassed, card_kind in parse_data:
+        if card_kind:
+            sender = "−AHN HYO SEOP" if card_kind == "dotflix" else "−SR"
             cards.append(
-                f"<blockquote>−AHN HYO SEOP\nB <a href=\"{source}\">{source}</a></blockquote>\n"
+                f"<blockquote>{sender}\nB <a href=\"{source}\">{source}</a></blockquote>\n"
                 f"<blockquote>{bypassed}</blockquote>\n\n"
                 "<blockquote>━━━━━━━✦✗✦━━━━━━━</blockquote>\n\n"
                 "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> ❞</blockquote>"
