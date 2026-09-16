@@ -115,3 +115,43 @@ async def gdflix(url: str) -> ProviderFileResult:
     if not links:
         raise DDLException("GDFlix metadata loaded but no public download links were exposed")
     return ProviderFileResult(filename, size, links)
+
+
+async def hubcloud(url: str) -> ProviderFileResult:
+    timeout = ClientTimeout(total=30)
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/html,application/xhtml+xml"}
+    async with ClientSession(timeout=timeout, headers=headers) as session:
+        async with session.get(url, allow_redirects=True, ssl=False) as response:
+            html = await response.text(errors="ignore")
+            if response.status != 200:
+                raise DDLException(f"HubCloud returned HTTP {response.status}")
+        generation = re.search(r"var\s+url\s*=\s*'([^']+)'", html)
+        if generation:
+            async with session.get(generation.group(1), allow_redirects=True, ssl=False) as generated:
+                generated_html = await generated.text(errors="ignore")
+                if generated.status == 200:
+                    html = generated_html
+    soup = BeautifulSoup(html, "html.parser")
+    title = soup.title.get_text(" ", strip=True) if soup.title else "HubCloud file"
+    size_node = soup.find(id="size")
+    size = size_node.get_text(" ", strip=True) if size_node else "Unknown size"
+    links = []
+    for anchor in soup.find_all("a", href=True):
+        href = unescape(anchor["href"])
+        label = anchor.get_text(" ", strip=True)
+        low = label.lower()
+        if not href.startswith(("http://", "https://")):
+            continue
+        if "pixeldrain" in href.lower() or "pixel" in low:
+            name = "Pixeldrain"
+        elif "telegram" in href.lower() or "telegram" in low or "/tg/" in href.lower():
+            name = "TG Link"
+        elif any(word in low for word in ("download", "10gbps", "server")) and "tutorial" not in low:
+            name = label or "Download"
+        else:
+            continue
+        if (name, href) not in links:
+            links.append((name, href))
+    if not links:
+        raise DDLException("HubCloud metadata loaded but no public provider links were exposed")
+    return ProviderFileResult(title, size, links)
