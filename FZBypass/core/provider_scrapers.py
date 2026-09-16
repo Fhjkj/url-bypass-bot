@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from html import unescape
+from urllib.parse import urlparse, urlunparse
 
 from aiohttp import ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
@@ -121,9 +122,17 @@ async def gdflix(url: str) -> ProviderFileResult:
         "Referer": url,
     }
     async with ClientSession(timeout=timeout, headers=headers) as session:
-        status, html = await _get_html(session, url, allow_redirects=True, ssl=False)
+        candidates = [url]
+        parsed = urlparse(url)
+        if parsed.hostname in {"gdflix.dev", "www.gdflix.dev"}:
+            candidates.append(urlunparse(parsed._replace(netloc="new4.gdflix.io")))
+        status, html = 0, ""
+        for candidate in candidates:
+            status, html = await _get_html(session, candidate, allow_redirects=True, ssl=False)
+            if status == 200:
+                break
         if status != 200:
-            raise DDLException(f"GDFlix returned HTTP {status}")
+            raise DDLException(f"GDFlix returned HTTP {status} after direct/proxy/redirect-host attempts")
     soup = BeautifulSoup(html, "html.parser")
     title_meta = soup.find("meta", attrs={"property": "og:description"})
     raw = title_meta.get("content", "") if title_meta else ""
