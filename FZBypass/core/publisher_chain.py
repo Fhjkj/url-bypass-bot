@@ -1,4 +1,5 @@
-from re import search
+from base64 import b64decode
+from re import findall, search
 from urllib.parse import urljoin, urlparse
 
 from aiohttp import ClientSession, ClientTimeout, ClientError
@@ -53,6 +54,30 @@ def _location(html: str, base_url: str) -> str | None:
     return urljoin(base_url, found.group(1)) if found else None
 
 
+def _embedded_telegram(html: str, source: str) -> str | None:
+    """Return a Telegram URL explicitly present in page or obfuscated ad markup."""
+    candidates = [html]
+    soup = BeautifulSoup(html, "html.parser")
+    for node in soup.find_all(attrs={"data-code": True}):
+        raw = node.get("data-code", "")
+        try:
+            candidates.append(b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", "ignore"))
+        except Exception:
+            pass
+    for node in soup.find_all(attrs={"data-fallback-code": True}):
+        raw = node.get("data-fallback-code", "")
+        try:
+            candidates.append(b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", "ignore"))
+        except Exception:
+            pass
+    for text in candidates:
+        for candidate in findall(r"https?://(?:t\.me|telegram\.me)/[^\s\"'<>]+", text, flags=2):
+            candidate = candidate.rstrip(".,);]")
+            if _valid_final(candidate, source):
+                return candidate
+    return None
+
+
 def _valid_final(candidate: str, source: str) -> bool:
     if not candidate or candidate == source:
         return False
@@ -90,6 +115,10 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                         body = await response.text(errors="ignore")
                         if _challenge(body, response.headers.get("title", "")):
                             raise DDLException("Cloudflare/CAPTCHA challenge detected; authorized browser/API required")
+                        embedded = _embedded_telegram(body, url)
+                        if embedded:
+                            save_verified(url, embedded, "embedded-telegram")
+                            return embedded
                         location = _location(body, str(response.url))
                         if location and location not in seen:
                             current = location
