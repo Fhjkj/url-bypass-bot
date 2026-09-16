@@ -1,7 +1,7 @@
 from time import time
 from html import escape
 from pathlib import Path
-from asyncio import create_task, gather, sleep as asleep
+from asyncio import create_task, gather, sleep as asleep, wait_for
 from pyrogram import filters
 from pyrogram.filters import command, user
 from pyrogram.types import (
@@ -73,7 +73,7 @@ async def bypass_check(client, message):
         if link:
             no += 1
             tlinks.append(link)
-            atasks.append(create_task(direct_link_checker(link)))
+            atasks.append(create_task(wait_for(direct_link_checker(link), timeout=60)))
             link = ""
 
     ad_domains = (
