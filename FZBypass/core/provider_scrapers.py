@@ -5,6 +5,7 @@ from urllib.parse import urlparse, urlunparse
 
 from aiohttp import ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
+from curl_cffi.requests import AsyncSession
 
 from FZBypass.core.exceptions import DDLException
 from FZBypass.core.proxy_pool import configured_proxies
@@ -39,6 +40,21 @@ async def _get_html(session, url: str, **kwargs):
                 continue
         return last_status, last_html
     return status, html
+
+
+async def _get_gdflix_html(url: str, proxy: str | None = None):
+    """Fetch GDFlix with a browser TLS fingerprint and an optional HTTP proxy."""
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": url,
+    }
+    async with AsyncSession(impersonate="chrome", timeout=12) as session:
+        kwargs = {"allow_redirects": True, "headers": headers}
+        if proxy:
+            kwargs["proxies"] = {"http": proxy, "https": proxy}
+        response = await session.get(url, **kwargs)
+        return response.status_code, response.text
 
 
 async def tmbcloud(url: str) -> ProviderFileResult:
@@ -115,22 +131,21 @@ async def toonworld_redirect(url: str) -> str:
 
 async def gdflix(url: str) -> ProviderFileResult:
     timeout = ClientTimeout(total=30)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": url,
-    }
-    async with ClientSession(timeout=timeout, headers=headers) as session:
-        candidates = [url]
-        parsed = urlparse(url)
-        if parsed.hostname in {"gdflix.dev", "www.gdflix.dev"}:
-            candidates.append(urlunparse(parsed._replace(netloc="new4.gdflix.io")))
-        status, html = 0, ""
-        for candidate in candidates:
-            status, html = await _get_html(session, candidate, allow_redirects=True, ssl=False)
+    candidates = [url]
+    parsed = urlparse(url)
+    if parsed.hostname in {"gdflix.dev", "www.gdflix.dev"}:
+        candidates.append(urlunparse(parsed._replace(netloc="new4.gdflix.io")))
+    status, html = 0, ""
+    for candidate in candidates:
+        status, html = await _get_gdflix_html(candidate)
+        if status == 200:
+            break
+        for proxy in configured_proxies():
+            status, html = await _get_gdflix_html(candidate, proxy=proxy)
             if status == 200:
                 break
+        if status == 200:
+            break
         if status != 200:
             raise DDLException(f"GDFlix returned HTTP {status} after direct/proxy/redirect-host attempts")
     soup = BeautifulSoup(html, "html.parser")
