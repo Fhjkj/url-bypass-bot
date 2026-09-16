@@ -1,7 +1,7 @@
 import re
 from dataclasses import dataclass
 from html import unescape
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 from aiohttp import ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
@@ -151,13 +151,16 @@ async def gdflix(url: str) -> ProviderFileResult:
     if parsed.hostname in {"gdflix.dev", "www.gdflix.dev"}:
         candidates.append(urlunparse(parsed._replace(netloc="new4.gdflix.io")))
     status, html = 0, ""
+    response_url = url
     for candidate in candidates:
         status, html = await _get_gdflix_html(candidate)
         if status == 200:
+            response_url = candidate
             break
         for proxy in configured_proxies():
             status, html = await _get_gdflix_html(candidate, proxy=proxy)
             if status == 200:
+                response_url = candidate
                 break
         if status == 200:
             break
@@ -175,9 +178,10 @@ async def gdflix(url: str) -> ProviderFileResult:
         size = "Unknown size"
     links = []
     for anchor in soup.find_all("a", href=True):
-        href = anchor["href"]
+        href = urljoin(response_url, anchor["href"])
         label = anchor.get_text(" ", strip=True)
-        if href.startswith(("http://", "https://")) and any(word in label.lower() for word in ("instant", "download", "gofile", "telegram")):
+        low = label.lower()
+        if href.startswith(("http://", "https://")) and any(word in low for word in ("instant", "download", "gofile", "telegram", "fast cloud", "zipdisk")):
             if (label, href) not in links:
                 links.append((label or "Download", href))
     if not links:
