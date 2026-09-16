@@ -8,6 +8,7 @@ from FZBypass.core.bot_utils import get_dl
 from FZBypass.core.exceptions import DDLException
 from FZBypass.core.redirect_extractor import extract_final_destination
 from FZBypass.core.publisher_chain import resolve_publisher_chain
+from FZBypass.core.dotflix import dotflix
 
 fmed_list = [
     "fembed.net",
@@ -399,6 +400,8 @@ async def direct_link_checker(link, onlylink=False):
         blink = await resolve_publisher_chain(link)
     elif bool(match(r"https?:\/\/link\.vipshort\.in\/\S+", link)):
         blink = await resolve_publisher_chain(link)
+    elif bool(match(r"https?:\/\/(?:www\.)?(?:dotflix\.store|dtflix\.ink)\/share\/\S+", link)):
+        blink = await dotflix(link)
     elif bool(match(r"https?:\/\/(?:www\.)?gplinks\.co\/\S+", link)):
         blink = await extract_final_destination(link)
     elif bool(match(r"https?:\/\/(?:www\.)?vplink\.in\/\S+", link)):
