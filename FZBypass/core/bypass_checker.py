@@ -9,6 +9,7 @@ from FZBypass.core.exceptions import DDLException
 from FZBypass.core.redirect_extractor import extract_final_destination
 from FZBypass.core.publisher_chain import resolve_publisher_chain
 from FZBypass.core.dotflix import dotflix
+from FZBypass.core.dotflix import DotflixResult
 
 fmed_list = [
     "fembed.net",
@@ -448,7 +449,7 @@ async def direct_link_checker(link, onlylink=False):
             f"<i>No Bypass Function Found for your Link :</i> <code>{link}</code>"
         )
 
-    if onlylink:
+    if onlylink or isinstance(blink, DotflixResult):
         return blink
 
     links = []

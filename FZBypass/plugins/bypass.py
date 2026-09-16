@@ -16,6 +16,7 @@ from pyrogram.errors import QueryIdInvalid
 
 from FZBypass import Config, Bypass, BOT_START
 from FZBypass.core.bypass_checker import direct_link_checker, is_excep_link
+from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.bot_utils import AuthChatsTopics, convert_time, BypassFilter
 
 
@@ -80,6 +81,18 @@ async def bypass_check(client, message):
         source = escape(str(link), quote=True)
         if isinstance(result, Exception):
             bypassed = f"❌ {escape(str(result), quote=True)}"
+        elif isinstance(result, DotflixResult):
+            filename = escape(result.filename, quote=True)
+            size = escape(result.size, quote=True)
+            provider_links = " | ".join(
+                f'<a href="{escape(url, quote=True)}">{escape(label)}</a>'
+                for label, url in result.providers
+            )
+            bypassed = (
+                f"📚 <b>File Name :-</b>\n{filename}\n"
+                f"│\n├ 💾 <b>Size :-</b> {size}\n"
+                f"│\n└ 🔗 <b>Links :-</b> {provider_links}"
+            )
         elif isinstance(result, list):
             links = [str(item) for item in result]
             bypassed = "\n".join(f"✅ <a href=\"{escape(item, quote=True)}\">{escape(item)}</a>" for item in links)
@@ -88,23 +101,31 @@ async def bypass_check(client, message):
         else:
             result_text = escape(str(result), quote=True)
             bypassed = f"✅ <a href=\"{result_text}\">{result_text}</a>"
-        parse_data.append((source, bypassed))
+        parse_data.append((source, bypassed, isinstance(result, DotflixResult)))
 
     end = time()
     elapsed = f"{end - start:.0f} seconds"
     cards = []
-    for source, bypassed in parse_data:
-        cards.append(
-            "<blockquote>-\n"
-            f"/bypass <a href=\"{source}\">{source}</a></blockquote>\n"
-            "<blockquote><b>Original Link : </b>❞</blockquote>\n"
-            f"<blockquote>✅ <a href=\"{source}\">{source}</a></blockquote>\n"
-            "<blockquote><b>Bypassed Link : </b>❞</blockquote>\n"
-            f"<blockquote>{bypassed}</blockquote>\n"
-            f"<blockquote><b>Time Taken : {escape(elapsed)}</b> ❞</blockquote>\n\n"
-            "━━━━━━━━━━━━━━━━━━\n\n"
-            "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> ❞</blockquote>"
-        )
+    for source, bypassed, is_dotflix in parse_data:
+        if is_dotflix:
+            cards.append(
+                f"<blockquote>−AHN HYO SEOP\nB <a href=\"{source}\">{source}</a></blockquote>\n"
+                f"<blockquote>{bypassed}</blockquote>\n\n"
+                "<blockquote>━━━━━━━✦✗✦━━━━━━━</blockquote>\n\n"
+                "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> ❞</blockquote>"
+            )
+        else:
+            cards.append(
+                "<blockquote>-\n"
+                f"/bypass <a href=\"{source}\">{source}</a></blockquote>\n"
+                "<blockquote><b>Original Link : </b>❞</blockquote>\n"
+                f"<blockquote>✅ <a href=\"{source}\">{source}</a></blockquote>\n"
+                "<blockquote><b>Bypassed Link : </b>❞</blockquote>\n"
+                f"<blockquote>{bypassed}</blockquote>\n"
+                f"<blockquote><b>Time Taken : {escape(elapsed)}</b> ❞</blockquote>\n\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> ❞</blockquote>"
+            )
     tg_txt = "\n\n".join(cards)
     if len(tg_txt) > 4000:
         chunks = [tg_txt[index : index + 3900] for index in range(0, len(tg_txt), 3900)]
