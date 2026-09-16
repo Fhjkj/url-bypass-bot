@@ -86,7 +86,12 @@ async def bypass_check(client, message):
             await wait_for(wait_msg.edit(f"<i>{operation} please wait</i>"), timeout=10)
         except Exception:
             pass
-    completed_tasks = await gather(*atasks, return_exceptions=True)
+    try:
+        completed_tasks = await wait_for(
+            gather(*atasks, return_exceptions=True), timeout=70
+        )
+    except Exception as error:
+        completed_tasks = [error for _ in tlinks]
 
     parse_data = []
     for result, link in zip(completed_tasks, tlinks):
