@@ -8,6 +8,7 @@ lxml
 httpx
 python-dotenv
 pyrofork
+tgcrypto
 playwright
 requests
 urllib3==1.26
