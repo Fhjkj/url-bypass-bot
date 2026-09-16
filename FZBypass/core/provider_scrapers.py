@@ -73,9 +73,10 @@ async def _get_browser_html(url: str, proxy: str | None = None):
         return response.status_code, response.text
 
 
-async def _get_filebee_api(file_id: str, proxy: str | None = None):
+async def _get_filebee_api(base_url: str, file_id: str, proxy: str | None = None):
     """Read FileBee metadata from its public frontend API when accessible."""
-    endpoint = f"https://api.filebee.xyz/api/file/file/{file_id}"
+    origin = f"{urlparse(base_url).scheme}://{urlparse(base_url).netloc}"
+    endpoint = f"{origin}/api/file/video/{file_id}/"
     status, body = await _get_browser_html(endpoint, proxy=proxy)
     if status != 200:
         return status, None
@@ -128,10 +129,10 @@ async def filebee(url: str) -> ProviderFileResult:
     file_id = urlparse(url).path.rstrip("/").rsplit("/", 1)[-1]
     api_responses = []
     try:
-        api_responses.append(await _get_filebee_api(file_id))
+        api_responses.append(await _get_filebee_api(url, file_id))
         if api_responses[-1][0] != 200 or not api_responses[-1][1]:
             for proxy in configured_proxies():
-                result = await _get_filebee_api(file_id, proxy=proxy)
+                result = await _get_filebee_api(url, file_id, proxy=proxy)
                 api_responses.append(result)
                 if result[0] == 200 and result[1]:
                     break
