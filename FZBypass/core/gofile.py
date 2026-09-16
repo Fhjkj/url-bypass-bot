@@ -35,33 +35,44 @@ def _files(node: dict):
 
 async def gofile(url: str) -> GofileResult:
     """Read a GoFile share through the official authenticated contents API."""
-    token = (
-        os.getenv("GOFILE_API_TOKEN")
-        or os.getenv("GOFILE_API_KEY")
-        or os.getenv("GOFILE_TOKEN")
-    )
-    if not token:
+    raw_tokens = [
+        os.getenv("GOFILE_API_TOKEN"),
+        os.getenv("GOFILE_API_KEY"),
+        os.getenv("GOFILE_TOKEN"),
+    ]
+    tokens = []
+    for raw_token in raw_tokens:
+        if not raw_token:
+            continue
+        token = raw_token.strip().strip('"\'')
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip().strip('"\'')
+        if token and token not in tokens:
+            tokens.append(token)
+    if not tokens:
         raise DDLException("GoFile API credentials are not configured")
-    token = token.strip()
-    if token.lower().startswith("bearer "):
-        token = token[7:].strip()
     code = url.rstrip("/").split("/")[-1]
     timeout = ClientTimeout(total=30)
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    async with ClientSession(timeout=timeout, headers=headers) as session:
+    async with ClientSession(timeout=timeout) as session:
         endpoint = f"https://api.gofile.io/contents/{code}"
-        async with session.get(endpoint) as response:
-            if response.status in {401, 403}:
-                async with session.get(f"{endpoint}?token={token}", headers={"Accept": "application/json"}) as retry:
-                    if retry.status in {401, 403}:
-                        raise DDLException("GoFile API authorization failed: token rejected")
-                    if retry.status != 200:
-                        raise DDLException(f"GoFile API returned HTTP {retry.status}")
+        payload = None
+        last_status = 401
+        for token in tokens:
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+            async with session.get(endpoint, headers=headers) as response:
+                last_status = response.status
+                if response.status == 200:
+                    payload = await response.json(content_type=None)
+                    break
+            async with session.get(f"{endpoint}?token={token}", headers={"Accept": "application/json"}) as retry:
+                last_status = retry.status
+                if retry.status == 200:
                     payload = await retry.json(content_type=None)
-            else:
-                if response.status != 200:
-                    raise DDLException(f"GoFile API returned HTTP {response.status}")
-                payload = await response.json(content_type=None)
+                    break
+        if payload is None:
+            if last_status in {401, 403}:
+                raise DDLException("GoFile API authorization failed: all configured tokens rejected")
+            raise DDLException(f"GoFile API returned HTTP {last_status}")
 
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, dict):
