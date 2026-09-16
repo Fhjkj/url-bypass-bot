@@ -57,6 +57,21 @@ async def _get_gdflix_html(url: str, proxy: str | None = None):
         return response.status_code, response.text
 
 
+async def _get_browser_html(url: str, proxy: str | None = None):
+    """Fetch an anti-bot-protected page with a Chrome-like TLS fingerprint."""
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": url,
+    }
+    async with AsyncSession(impersonate="chrome", timeout=12) as session:
+        kwargs = {"allow_redirects": True, "headers": headers}
+        if proxy:
+            kwargs["proxies"] = {"http": proxy, "https": proxy}
+        response = await session.get(url, **kwargs)
+        return response.status_code, response.text
+
+
 async def tmbcloud(url: str) -> ProviderFileResult:
     timeout = ClientTimeout(total=30)
     async with ClientSession(timeout=timeout, headers={"User-Agent": "Mozilla/5.0"}) as session:
@@ -83,17 +98,17 @@ async def tmbcloud(url: str) -> ProviderFileResult:
 
 
 async def filebee(url: str) -> ProviderFileResult:
-    timeout = ClientTimeout(total=30)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": url,
-    }
-    async with ClientSession(timeout=timeout, headers=headers) as session:
-        status, html = await _get_html(session, url, allow_redirects=True, ssl=False)
-        if status != 200:
-            raise DDLException(f"FileBee returned HTTP {status} after direct/proxy attempts")
+    status, html = await _get_browser_html(url)
+    if status != 200:
+        for proxy in configured_proxies():
+            try:
+                status, html = await _get_browser_html(url, proxy=proxy)
+                if status == 200:
+                    break
+            except Exception:
+                continue
+    if status != 200:
+        raise DDLException(f"FileBee returned HTTP {status} after direct/proxy attempts")
     lowered = html.lower()
     if any(marker in lowered for marker in ("cf-chl-", "just a moment...", "captcha", "verify you are human")):
         raise DDLException("FileBee scraping stopped: Cloudflare/CAPTCHA challenge detected")
