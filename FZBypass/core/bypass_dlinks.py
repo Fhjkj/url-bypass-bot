@@ -44,13 +44,17 @@ async def filepress(url: str):
                 if tg_response.status_code != 200 or not tg_id.get("data"):
                     last_error = f"FilePress API HTTP {tg_response.status_code}"
                     continue
-                t_url = f"https://tghub.xyz/?start={tg_id['data']}"
-                bot_page = await sess.get(t_url, headers=headers, **({"proxies": {"http": proxy, "https": proxy}} if proxy else {}))
-                matches = findall("filepress_[a-zA-Z0-9]+_bot", bot_page.text)
-                if not matches:
-                    last_error = "FilePress Telegram bot was not exposed"
-                    continue
-                tg_link = f"https://t.me/{matches[0]}/?start={tg_id['data']}"
+                data = tg_id["data"]
+                if isinstance(data, str) and data.startswith(("http://", "https://")):
+                    tg_link = data
+                else:
+                    t_url = f"https://tghub.xyz/?start={data}"
+                    bot_page = await sess.get(t_url, headers=headers, **({"proxies": {"http": proxy, "https": proxy}} if proxy else {}))
+                    matches = findall("filepress_[a-zA-Z0-9]+_bot", bot_page.text)
+                    if not matches:
+                        last_error = "FilePress Telegram bot was not exposed"
+                        continue
+                    tg_link = f"https://t.me/{matches[0]}/?start={data}"
                 parse_txt = f"""┏<b>FilePress:</b> <a href="{url}">Click Here</a>
 ┗<b>Telegram:</b> <a href="{tg_link}">Click Here</a>"""
                 return parse_txt
