@@ -18,8 +18,6 @@ CHALLENGE_MARKERS = (
     "enable javascript and cookies",
     "checking your browser",
     "iuam",
-    "challenge-platform",
-    "turnstile-challenge",
 )
 INTERMEDIARY_MARKERS = ("skrresults.com", "google.com/httpservice")
 
