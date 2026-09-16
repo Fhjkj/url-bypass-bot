@@ -17,3 +17,5 @@ services:
         sync: false
       - key: AUTH_CHATS
         sync: false
+      - key: GOFILE_API_KEY
+        sync: false
