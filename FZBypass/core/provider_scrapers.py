@@ -80,3 +80,38 @@ async def toonworld_redirect(url: str) -> str:
         if destination:
             return destination.group(1)
     raise DDLException("ToonWorld redirect destination was not exposed")
+
+
+async def gdflix(url: str) -> ProviderFileResult:
+    timeout = ClientTimeout(total=30)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": url,
+    }
+    async with ClientSession(timeout=timeout, headers=headers) as session:
+        async with session.get(url, allow_redirects=True, ssl=False) as response:
+            html = await response.text(errors="ignore")
+            if response.status != 200:
+                raise DDLException(f"GDFlix returned HTTP {response.status}")
+    soup = BeautifulSoup(html, "html.parser")
+    title_meta = soup.find("meta", attrs={"property": "og:description"})
+    raw = title_meta.get("content", "") if title_meta else ""
+    match = re.match(r"Download (.+?) - ([\d.]+\s*(?:KB|MB|GB|TB))$", raw, flags=re.I)
+    if match:
+        filename, size = match.group(1).strip(), match.group(2).strip()
+    else:
+        title = soup.title.get_text(" ", strip=True) if soup.title else "GDFlix file"
+        filename = re.sub(r"^GDFlix\s*\|\s*", "", title, flags=re.I)
+        size = "Unknown size"
+    links = []
+    for anchor in soup.find_all("a", href=True):
+        href = anchor["href"]
+        label = anchor.get_text(" ", strip=True)
+        if href.startswith(("http://", "https://")) and any(word in label.lower() for word in ("instant", "download", "gofile", "telegram")):
+            if (label, href) not in links:
+                links.append((label or "Download", href))
+    if not links:
+        raise DDLException("GDFlix metadata loaded but no public download links were exposed")
+    return ProviderFileResult(filename, size, links)

@@ -11,7 +11,7 @@ from FZBypass.core.publisher_chain import resolve_publisher_chain
 from FZBypass.core.dotflix import dotflix
 from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import gofile, GofileResult
-from FZBypass.core.provider_scrapers import filebee, tmbcloud, toonworld_redirect, ProviderFileResult
+from FZBypass.core.provider_scrapers import filebee, gdflix, tmbcloud, toonworld_redirect, ProviderFileResult
 
 fmed_list = [
     "fembed.net",
@@ -411,6 +411,8 @@ async def direct_link_checker(link, onlylink=False):
         blink = await tmbcloud(link)
     elif bool(match(r"https?:\/\/filebee\.xyz\/file\/\S+", link)):
         blink = await filebee(link)
+    elif bool(match(r"https?:\/\/(?:www\.)?gdflix\.(?:dev|io)\/file\/\S+", link)):
+        blink = await gdflix(link)
     elif bool(match(r"https?:\/\/archive\.toonworld4all\.me\/redirect\/\S+", link)):
         blink = await toonworld_redirect(link)
     elif bool(match(r"https?:\/\/(?:www\.)?gplinks\.co\/\S+", link)):
