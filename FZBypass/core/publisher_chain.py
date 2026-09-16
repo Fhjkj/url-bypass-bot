@@ -7,7 +7,18 @@ from bs4 import BeautifulSoup
 from FZBypass.core.exceptions import DDLException
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
-CHALLENGE_MARKERS = ("just a moment", "cf-chl-", "cloudflare", "captcha", "recaptcha", "verify you are human")
+CHALLENGE_MARKERS = (
+    "just a moment",
+    "cf-chl-",
+    "cf-ray",
+    "cloudflare",
+    "captcha",
+    "recaptcha",
+    "verify you are human",
+    "enable javascript and cookies",
+    "checking your browser",
+    "iuam",
+)
 INTERMEDIARY_MARKERS = ("hittracks.in.net", "skrresults.com", "insurance.", "study.", "google.com/httpservice")
 
 
