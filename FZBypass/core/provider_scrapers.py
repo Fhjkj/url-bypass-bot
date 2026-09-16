@@ -6,6 +6,7 @@ from aiohttp import ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
 
 from FZBypass.core.exceptions import DDLException
+from FZBypass.core.proxy_pool import next_proxy
 
 
 @dataclass
@@ -13,6 +14,18 @@ class ProviderFileResult:
     filename: str
     size: str
     links: list[tuple[str, str]]
+
+
+async def _get_html(session, url: str, **kwargs):
+    async with session.get(url, **kwargs) as response:
+        status = response.status
+        html = await response.text(errors="ignore")
+    if status == 403:
+        proxy = next_proxy()
+        if proxy:
+            async with session.get(url, proxy=proxy, **kwargs) as response:
+                return response.status, await response.text(errors="ignore")
+    return status, html
 
 
 async def tmbcloud(url: str) -> ProviderFileResult:
@@ -91,10 +104,9 @@ async def gdflix(url: str) -> ProviderFileResult:
         "Referer": url,
     }
     async with ClientSession(timeout=timeout, headers=headers) as session:
-        async with session.get(url, allow_redirects=True, ssl=False) as response:
-            html = await response.text(errors="ignore")
-            if response.status != 200:
-                raise DDLException(f"GDFlix returned HTTP {response.status}")
+        status, html = await _get_html(session, url, allow_redirects=True, ssl=False)
+        if status != 200:
+            raise DDLException(f"GDFlix returned HTTP {status}")
     soup = BeautifulSoup(html, "html.parser")
     title_meta = soup.find("meta", attrs={"property": "og:description"})
     raw = title_meta.get("content", "") if title_meta else ""
@@ -121,10 +133,9 @@ async def hubcloud(url: str) -> ProviderFileResult:
     timeout = ClientTimeout(total=30)
     headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/html,application/xhtml+xml"}
     async with ClientSession(timeout=timeout, headers=headers) as session:
-        async with session.get(url, allow_redirects=True, ssl=False) as response:
-            html = await response.text(errors="ignore")
-            if response.status != 200:
-                raise DDLException(f"HubCloud returned HTTP {response.status}")
+        status, html = await _get_html(session, url, allow_redirects=True, ssl=False)
+        if status != 200:
+            raise DDLException(f"HubCloud returned HTTP {status}")
         generation = re.search(r"var\s+url\s*=\s*'([^']+)'", html)
         if not generation:
             generation = re.search(
