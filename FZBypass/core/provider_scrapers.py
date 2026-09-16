@@ -149,7 +149,7 @@ async def hubcloud(url: str) -> ProviderFileResult:
         elif "telegram" in href.lower() or "telegram" in low or "/tg/" in href.lower():
             name = "TG Link"
         elif any(word in low for word in ("download", "10gbps", "server")) and "tutorial" not in low:
-            name = label or "Download"
+            name = "DL Server" if "generate direct" in low else (label or "Download")
         else:
             continue
         if (name, href) not in links:
