@@ -20,7 +20,7 @@ CHALLENGE_MARKERS = (
     "checking your browser",
     "iuam",
 )
-INTERMEDIARY_MARKERS = ("skrresults.com", "google.com/httpservice")
+INTERMEDIARY_MARKERS = ("hittracks.in.net", "insurance.", "study.", "skrresults.com", "google.com/httpservice")
 
 
 def _challenge(html: str, title: str = "") -> bool:
@@ -127,6 +127,8 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                             final_url = str(response.url)
                             save_verified(url, final_url, "publisher-redirect")
                             return final_url
+                        if any(marker in (urlparse(str(response.url)).hostname or "").lower() for marker in INTERMEDIARY_MARKERS):
+                            raise DDLException(f"Publisher chain reached an intermediary article without exposing the final destination at {current}")
                         form = _form(body, str(response.url))
                         if form:
                             action, fields = form

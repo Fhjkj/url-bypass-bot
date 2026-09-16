@@ -9,6 +9,9 @@ from FZBypass.core.exceptions import DDLException
 CACHE_PATH = os.getenv("DESTINATION_CACHE_DB", "destinations.sqlite3")
 DEFAULT_TTL = max(300, int(os.getenv("DESTINATION_CACHE_TTL_SECONDS", "86400")))
 INVALID_HOST_MARKERS = (
+    "hittracks.in.net",
+    "insurance.",
+    "study.",
     "skrresults.com",
     "google.com/httpservice",
 )
