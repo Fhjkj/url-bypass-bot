@@ -58,7 +58,7 @@ async def bypass_check(client, message):
     else:
         return await message.reply("<i>No Link Provided!</i>")
 
-    wait_msg = await message.reply("<i>Bypassing...</i>")
+    wait_msg = await message.reply("<i>🔎 Scraping... please wait</i>")
     start = time()
 
     link, tlinks, no = "", [], 0

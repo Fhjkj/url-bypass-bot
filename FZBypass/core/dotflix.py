@@ -35,7 +35,16 @@ async def dotflix(url: str) -> DotflixResult:
             if response.status != 200:
                 raise DDLException(f"DotFlix returned HTTP {response.status}")
             lowered = html.lower()
-            if any(marker in lowered for marker in ("cloudflare", "captcha", "just a moment", "verify you are human")):
+            challenge_markers = (
+                "cf-chl-",
+                "just a moment...",
+                "captcha",
+                "recaptcha",
+                "verify you are human",
+                "checking your browser",
+                "enable javascript and cookies",
+            )
+            if any(marker in lowered for marker in challenge_markers):
                 raise DDLException("DotFlix Cloudflare/CAPTCHA challenge detected")
 
     filename = _value(html, "filename") or "Unknown file"
