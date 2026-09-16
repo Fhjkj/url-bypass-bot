@@ -142,6 +142,8 @@ async def hubcloud(url: str) -> ProviderFileResult:
         low = label.lower()
         if not href.startswith(("http://", "https://")):
             continue
+        if "hubcloudreport" in href.lower() or "report" in low:
+            continue
         if "pixeldrain" in href.lower() or "pixel" in low:
             name = "Pixeldrain"
         elif "telegram" in href.lower() or "telegram" in low or "/tg/" in href.lower():
