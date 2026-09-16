@@ -81,7 +81,11 @@ async def bypass_check(client, message):
         "vipshort.in", "adsfly", "adrinolinks", "archive.toonworld4all.me",
     )
     operation = "🔗 Bypassing ads..." if any(any(domain in item.lower() for domain in ad_domains) for item in tlinks) else "🔎 Scraping..."
-    await wait_msg.edit(f"<i>{operation} please wait</i>")
+    if operation != "🔎 Scraping...":
+        try:
+            await wait_for(wait_msg.edit(f"<i>{operation} please wait</i>"), timeout=10)
+        except Exception:
+            pass
     completed_tasks = await gather(*atasks, return_exceptions=True)
 
     parse_data = []
