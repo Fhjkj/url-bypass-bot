@@ -9,64 +9,55 @@ from cloudscraper import create_scraper
 from lxml import etree
 from requests import Session
 from aiohttp import ClientSession
+from curl_cffi.requests import AsyncSession
 
 from FZBypass import LOGGER, Config
 from FZBypass.core.bot_utils import get_dl
 from FZBypass.core.exceptions import DDLException
+from FZBypass.core.proxy_pool import configured_proxies
 
 
 async def filepress(url: str):
-    cget = create_scraper().request
-    try:
-        url = cget("GET", url).url
-        raw = urlparse(url)
-        async with ClientSession() as sess:
-            json_data = {
-                "id": raw.path.split("/")[-1],
-                "method": "publicDownlaod",
+    attempts = [None, *configured_proxies()]
+    last_error = None
+    for proxy in attempts:
+        try:
+            headers = {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": url,
             }
-            # async with await sess.post(f'{raw.scheme}://{raw.hostname}/api/file/downlaod/', headers={'Referer': f'{raw.scheme}://{raw.hostname}'}, json=json_data) as resp:
-            #    d_id = await resp.json()
-            # if d_id.get('data', False):
-            #    dl_link = f"https://drive.google.com/uc?id={d_id['data']}&export=download"
-            #    parsed = BeautifulSoup(cget('GET', dl_link).content, 'html.parser').find('span')
-            #    combined = str(parsed).rsplit('(', maxsplit=1)
-            #    name, size = combined[0], combined[1].replace(')', '') + 'B'
-            # else:
-            #    dl_link = "Unavailable" if d_id["statusText"] == "Bad Request" else d_id["statusText"]
-            #    name, size = "N/A", "N/A"
-            del json_data["method"]
-            async with await sess.post(
-                f"{raw.scheme}://{raw.hostname}/api/file/telegram/downlaod/",
-                headers={"Referer": f"{raw.scheme}://{raw.hostname}"},
-                json=json_data,
-            ) as resp:
-                tg_id = await resp.json()
-            if tg_id.get("data", False):
+            async with AsyncSession(impersonate="chrome", timeout=12) as sess:
+                request_kwargs = {"allow_redirects": True, "headers": headers}
+                if proxy:
+                    request_kwargs["proxies"] = {"http": proxy, "https": proxy}
+                page = await sess.get(url, **request_kwargs)
+                if page.status_code != 200:
+                    last_error = f"HTTP {page.status_code}"
+                    continue
+                raw = urlparse(str(page.url))
+                api_headers = {**headers, "Content-Type": "application/json"}
+                json_data = {"id": raw.path.split("/")[-1]}
+                api_url = f"{raw.scheme}://{raw.netloc}/api/file/telegram/downlaod/"
+                tg_response = await sess.post(api_url, headers=api_headers, json=json_data, **({"proxies": {"http": proxy, "https": proxy}} if proxy else {}))
+                tg_id = tg_response.json()
+                if tg_response.status_code != 200 or not tg_id.get("data"):
+                    last_error = f"FilePress API HTTP {tg_response.status_code}"
+                    continue
                 t_url = f"https://tghub.xyz/?start={tg_id['data']}"
-                bot_name = findall(
-                    "filepress_[a-zA-Z0-9]+_bot", cget("GET", t_url).text
-                )[0]
-                tg_link = f"https://t.me/{bot_name}/?start={tg_id['data']}"
-            else:
-                tg_link = (
-                    "Unavailable"
-                    if tg_id["statusText"] == "Ok"
-                    else tg_id["statusText"]
-                )
-    except Exception as e:
-        raise DDLException(f"{e.__class__.__name__}")
-    if tg_link == "Unavailable":
-        tg_link_text = "Unavailable"
-    else:
-        tg_link_text = f'<a href="{tg_link}">Click Here</a>'
-
-    parse_txt = f"""┏<b>FilePress:</b> <a href="{url}">Click Here</a>
-┗<b>Telegram:</b> {tg_link_text}"""
-    # if "drive.google.com" in dl_link and Config.DIRECT_INDEX:
-    #    parse_txt += f"┠<b>Temp Index:</b> <a href='{get_dl(dl_link)}'>Click Here</a>\n"
-    # parse_txt += f"┗<b>GDrive:</b> <a href='{dl_link}'>Click Here</a>"
-    return parse_txt
+                bot_page = await sess.get(t_url, headers=headers, **({"proxies": {"http": proxy, "https": proxy}} if proxy else {}))
+                matches = findall("filepress_[a-zA-Z0-9]+_bot", bot_page.text)
+                if not matches:
+                    last_error = "FilePress Telegram bot was not exposed"
+                    continue
+                tg_link = f"https://t.me/{matches[0]}/?start={tg_id['data']}"
+                parse_txt = f"""┏<b>FilePress:</b> <a href="{url}">Click Here</a>
+┗<b>Telegram:</b> <a href="{tg_link}">Click Here</a>"""
+                return parse_txt
+        except Exception as exc:
+            last_error = f"{exc.__class__.__name__}: {exc}"
+            continue
+    raise DDLException(f"FilePress direct/proxy attempts failed: {last_error or 'unknown error'}")
 
 
 async def gdtot(url):
