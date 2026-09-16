@@ -18,6 +18,7 @@ from FZBypass import Config, Bypass, BOT_START
 from FZBypass.core.bypass_checker import direct_link_checker, is_excep_link
 from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import GofileResult
+from FZBypass.core.provider_scrapers import ProviderFileResult
 from FZBypass.core.bot_utils import AuthChatsTopics, convert_time, BypassFilter
 
 
@@ -75,6 +76,12 @@ async def bypass_check(client, message):
             atasks.append(create_task(direct_link_checker(link)))
             link = ""
 
+    ad_domains = (
+        "arolinks.com", "gplinks.co", "vplink.in", "short4cash.com",
+        "vipshort.in", "adsfly", "adrinolinks", "archive.toonworld4all.me",
+    )
+    operation = "🔗 Bypassing ads..." if any(any(domain in item.lower() for domain in ad_domains) for item in tlinks) else "🔎 Scraping..."
+    await wait_msg.edit(f"<i>{operation} please wait</i>")
     completed_tasks = await gather(*atasks, return_exceptions=True)
 
     parse_data = []
@@ -107,6 +114,18 @@ async def bypass_check(client, message):
                 f"│\n├ 💾 <b>Size :-</b> {size}\n"
                 f"│\n└ 🔗 <b>Links :-</b> {provider_links}"
             )
+        elif isinstance(result, ProviderFileResult):
+            filename = escape(result.filename, quote=True)
+            size = escape(result.size, quote=True)
+            provider_links = " | ".join(
+                f'<a href="{escape(url, quote=True)}">{escape(label)}</a>'
+                for label, url in result.links
+            )
+            bypassed = (
+                f"📚 <b>File Name :-</b> {filename}\n"
+                f"│\n├ 💾 <b>Size :-</b> {size}\n"
+                f"│\n└ 🔗 <b>Links :-</b> {provider_links}"
+            )
         elif isinstance(result, list):
             links = [str(item) for item in result]
             bypassed = "\n".join(f"✅ <a href=\"{escape(item, quote=True)}\">{escape(item)}</a>" for item in links)
@@ -115,7 +134,7 @@ async def bypass_check(client, message):
         else:
             result_text = escape(str(result), quote=True)
             bypassed = f"✅ <a href=\"{result_text}\">{result_text}</a>"
-        card_kind = "gofile" if isinstance(result, GofileResult) else "dotflix" if isinstance(result, DotflixResult) else ""
+        card_kind = "gofile" if isinstance(result, GofileResult) else "dotflix" if isinstance(result, DotflixResult) else "provider" if isinstance(result, ProviderFileResult) else ""
         parse_data.append((source, bypassed, card_kind))
 
     end = time()

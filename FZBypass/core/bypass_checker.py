@@ -11,6 +11,7 @@ from FZBypass.core.publisher_chain import resolve_publisher_chain
 from FZBypass.core.dotflix import dotflix
 from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import gofile, GofileResult
+from FZBypass.core.provider_scrapers import filebee, tmbcloud, toonworld_redirect, ProviderFileResult
 
 fmed_list = [
     "fembed.net",
@@ -406,6 +407,12 @@ async def direct_link_checker(link, onlylink=False):
         blink = await dotflix(link)
     elif bool(match(r"https?:\/\/(?:www\.)?gofile\.io\/d\/\S+", link)):
         blink = await gofile(link)
+    elif bool(match(r"https?:\/\/tmbcloud\.(?:dev|lol)\/download\/\S+", link)):
+        blink = await tmbcloud(link)
+    elif bool(match(r"https?:\/\/filebee\.xyz\/file\/\S+", link)):
+        blink = await filebee(link)
+    elif bool(match(r"https?:\/\/archive\.toonworld4all\.me\/redirect\/\S+", link)):
+        blink = await toonworld_redirect(link)
     elif bool(match(r"https?:\/\/(?:www\.)?gplinks\.co\/\S+", link)):
         blink = await extract_final_destination(link)
     elif bool(match(r"https?:\/\/(?:www\.)?vplink\.in\/\S+", link)):
@@ -452,7 +459,7 @@ async def direct_link_checker(link, onlylink=False):
             f"<i>No Bypass Function Found for your Link :</i> <code>{link}</code>"
         )
 
-    if onlylink or isinstance(blink, (DotflixResult, GofileResult)):
+    if onlylink or isinstance(blink, (DotflixResult, GofileResult, ProviderFileResult)):
         return blink
 
     links = []
