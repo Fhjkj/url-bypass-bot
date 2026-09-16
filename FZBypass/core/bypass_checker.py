@@ -39,7 +39,7 @@ def is_share_link(url):
 def is_excep_link(url):
     return bool(
         match(
-            r"https?:\/\/.+\.(1tamilmv|gdtot|filepress|pressbee|gdflix|sharespark)\.\S+|https?:\/\/(sharer|onlystream|hubdrive|katdrive|drivefire|skymovieshd|toonworld4all|kayoanime|cinevood|gdflix|filepress|pressbee|filebee|appdrive)\.\S+",
+            r"https?:\/\/.+\.(1tamilmv|gdtot|filepress|pressbee|gdflix|sharespark)\.\S+|https?:\/\/(sharer|onlystream|hubdrive|katdrive|drivefire|skymovieshd|toonworld4all|kayoanime|cinevood|gdflix|filepress|pressbee|filebee|appdrive|hubcloud)\.\S+",
             url,
         )
     )
@@ -413,7 +413,7 @@ async def direct_link_checker(link, onlylink=False):
         blink = await filebee(link)
     elif bool(match(r"https?:\/\/(?:www\.)?gdflix\.(?:dev|io)\/file\/\S+", link)):
         blink = await gdflix(link)
-    elif bool(match(r"https?:\/\/hubcloud\.(?:ist|cx|fans|lol)\/(?:drive|video)\/\S+", link)):
+    elif bool(match(r"https?:\/\/hubcloud\.(?:ist|cx|fans|lol|foo)\/(?:drive|video)\/\S+", link)):
         blink = await hubcloud(link)
     elif bool(match(r"https?:\/\/archive\.toonworld4all\.me\/redirect\/\S+", link)):
         blink = await toonworld_redirect(link)
