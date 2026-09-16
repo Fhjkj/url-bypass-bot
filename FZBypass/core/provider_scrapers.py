@@ -23,7 +23,7 @@ async def _get_html(session, url: str, **kwargs):
     if status == 403:
         proxy = next_proxy()
         if proxy:
-            async with session.get(url, proxy=proxy, **kwargs) as response:
+            async with session.get(url, proxy=proxy, timeout=ClientTimeout(total=12), **kwargs) as response:
                 return response.status, await response.text(errors="ignore")
     return status, html
 
