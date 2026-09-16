@@ -413,7 +413,7 @@ async def direct_link_checker(link, onlylink=False):
         blink = await filebee(link)
     elif bool(match(r"https?:\/\/(?:www\.)?gdflix\.(?:dev|io)\/file\/\S+", link)):
         blink = await gdflix(link)
-    elif bool(match(r"https?:\/\/hubcloud\.(?:ist|cx|fans|lol)\/drive\/\S+", link)):
+    elif bool(match(r"https?:\/\/hubcloud\.(?:ist|cx|fans|lol)\/(?:drive|video)\/\S+", link)):
         blink = await hubcloud(link)
     elif bool(match(r"https?:\/\/archive\.toonworld4all\.me\/redirect\/\S+", link)):
         blink = await toonworld_redirect(link)
