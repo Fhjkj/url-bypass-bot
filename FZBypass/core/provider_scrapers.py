@@ -6,7 +6,7 @@ from aiohttp import ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
 
 from FZBypass.core.exceptions import DDLException
-from FZBypass.core.proxy_pool import next_proxy
+from FZBypass.core.proxy_pool import configured_proxies
 
 
 @dataclass
@@ -23,13 +23,20 @@ async def _get_html(session, url: str, **kwargs):
         status = response.status
         html = await response.text(errors="ignore")
     if status == 403:
-        proxy = next_proxy()
-        if proxy:
+        last_status, last_html = status, html
+        for proxy in configured_proxies():
             proxy_kwargs = dict(request_kwargs)
             proxy_kwargs["proxy"] = proxy
             proxy_kwargs["timeout"] = ClientTimeout(total=12)
-            async with session.get(url, **proxy_kwargs) as response:
-                return response.status, await response.text(errors="ignore")
+            try:
+                async with session.get(url, **proxy_kwargs) as response:
+                    proxy_html = await response.text(errors="ignore")
+                    if response.status != 403:
+                        return response.status, proxy_html
+                    last_status, last_html = response.status, proxy_html
+            except Exception:
+                continue
+        return last_status, last_html
     return status, html
 
 

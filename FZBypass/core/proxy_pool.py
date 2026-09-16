@@ -16,3 +16,8 @@ def next_proxy() -> str | None:
     if not values:
         return None
     return values[monotonic_ns() % len(values)]
+
+
+def configured_proxies() -> list[str]:
+    """Return the configured proxy pool in deterministic order for retries."""
+    return _configured_proxies()
