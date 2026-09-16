@@ -161,16 +161,22 @@ async def bypass_check(client, message):
                 "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> ❞</blockquote>"
             )
     tg_txt = "\n\n".join(cards)
-    if len(tg_txt) > 4000:
-        chunks = [tg_txt[index : index + 3900] for index in range(0, len(tg_txt), 3900)]
-        await wait_msg.edit(chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        for chunk in chunks[1:]:
-            wait_msg = await message.reply(chunk, reply_to_message_id=wait_msg.id, parse_mode=ParseMode.HTML)
-            await asleep(0.5)
-    elif tg_txt:
-        await wait_msg.edit(tg_txt, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-    else:
-        await wait_msg.edit("<i>No links found.</i>")
+    try:
+        if len(tg_txt) > 4000:
+            chunks = [tg_txt[index : index + 3900] for index in range(0, len(tg_txt), 3900)]
+            await wait_msg.edit(chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            for chunk in chunks[1:]:
+                wait_msg = await message.reply(chunk, reply_to_message_id=wait_msg.id, parse_mode=ParseMode.HTML)
+                await asleep(0.5)
+        elif tg_txt:
+            await wait_msg.edit(tg_txt, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        else:
+            await wait_msg.edit("<i>No links found.</i>")
+    except Exception as error:
+        fallback = "\n\n".join(
+            f"{source}\n{bypassed.replace('<', '').replace('>', '')}" for source, bypassed, _ in parse_data
+        ) or "No links found."
+        await wait_msg.edit(f"Scrape completed, but formatted output failed: {escape(str(error))}\n\n{fallback[:3500]}")
 
 
 @Bypass.on_message(command("log") & user(Config.OWNER_ID))
