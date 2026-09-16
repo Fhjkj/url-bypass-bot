@@ -73,6 +73,8 @@ async def gofile(url: str) -> GofileResult:
             if last_status in {401, 403}:
                 raise DDLException("GoFile API authorization failed: all configured tokens rejected")
             raise DDLException(f"GoFile API returned HTTP {last_status}")
+        if isinstance(payload, dict) and payload.get("status") == "error-notPremium":
+            raise DDLException("GoFile API token accepted, but this contents endpoint requires a Premium account")
 
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, dict):
