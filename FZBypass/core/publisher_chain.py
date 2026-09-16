@@ -21,7 +21,7 @@ CHALLENGE_MARKERS = (
     "checking your browser",
     "iuam",
 )
-INTERMEDIARY_MARKERS = ("hittracks.in.net", "skrresults.com", "insurance.", "study.", "google.com/httpservice")
+INTERMEDIARY_MARKERS = ("skrresults.com", "google.com/httpservice")
 
 
 def _challenge(html: str, title: str = "") -> bool:
