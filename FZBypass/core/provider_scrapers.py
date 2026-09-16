@@ -67,11 +67,16 @@ async def tmbcloud(url: str) -> ProviderFileResult:
 
 async def filebee(url: str) -> ProviderFileResult:
     timeout = ClientTimeout(total=30)
-    async with ClientSession(timeout=timeout, headers={"User-Agent": "Mozilla/5.0"}) as session:
-        async with session.get(url, allow_redirects=True, ssl=False) as response:
-            html = await response.text(errors="ignore")
-            if response.status != 200:
-                raise DDLException(f"FileBee returned HTTP {response.status}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": url,
+    }
+    async with ClientSession(timeout=timeout, headers=headers) as session:
+        status, html = await _get_html(session, url, allow_redirects=True, ssl=False)
+        if status != 200:
+            raise DDLException(f"FileBee returned HTTP {status} after direct/proxy attempts")
     lowered = html.lower()
     if any(marker in lowered for marker in ("cf-chl-", "just a moment...", "captcha", "verify you are human")):
         raise DDLException("FileBee scraping stopped: Cloudflare/CAPTCHA challenge detected")
