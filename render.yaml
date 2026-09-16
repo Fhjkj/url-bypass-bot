@@ -19,3 +19,5 @@ services:
         sync: false
       - key: GOFILE_API_KEY
         sync: false
+      - key: GOFILE_API_TOKEN
+        sync: false

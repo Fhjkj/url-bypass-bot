@@ -35,7 +35,11 @@ def _files(node: dict):
 
 async def gofile(url: str) -> GofileResult:
     """Read a GoFile share through the official authenticated contents API."""
-    token = os.getenv("GOFILE_API_KEY") or os.getenv("GOFILE_TOKEN")
+    token = (
+        os.getenv("GOFILE_API_TOKEN")
+        or os.getenv("GOFILE_API_KEY")
+        or os.getenv("GOFILE_TOKEN")
+    )
     if not token:
         raise DDLException("GoFile API credentials are not configured")
     code = url.rstrip("/").split("/")[-1]
