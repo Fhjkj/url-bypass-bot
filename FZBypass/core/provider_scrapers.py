@@ -17,13 +17,18 @@ class ProviderFileResult:
 
 
 async def _get_html(session, url: str, **kwargs):
-    async with session.get(url, **kwargs) as response:
+    request_kwargs = dict(kwargs)
+    request_kwargs.setdefault("timeout", ClientTimeout(total=30))
+    async with session.get(url, **request_kwargs) as response:
         status = response.status
         html = await response.text(errors="ignore")
     if status == 403:
         proxy = next_proxy()
         if proxy:
-            async with session.get(url, proxy=proxy, timeout=ClientTimeout(total=12), **kwargs) as response:
+            proxy_kwargs = dict(request_kwargs)
+            proxy_kwargs["proxy"] = proxy
+            proxy_kwargs["timeout"] = ClientTimeout(total=12)
+            async with session.get(url, **proxy_kwargs) as response:
                 return response.status, await response.text(errors="ignore")
     return status, html
 

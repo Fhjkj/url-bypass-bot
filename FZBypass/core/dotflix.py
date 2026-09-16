@@ -2,6 +2,7 @@ import re
 from dataclasses import dataclass
 
 from aiohttp import ClientSession, ClientTimeout
+from bs4 import BeautifulSoup
 
 from FZBypass.core.exceptions import DDLException
 
@@ -34,7 +35,10 @@ async def dotflix(url: str) -> DotflixResult:
             html = await response.text(errors="ignore")
             if response.status != 200:
                 raise DDLException(f"DotFlix returned HTTP {response.status}")
-            lowered = html.lower()
+            soup = BeautifulSoup(html, "html.parser")
+            page_text = soup.get_text(" ", strip=True).lower()
+            script_text = "\n".join(script.get_text() for script in soup.find_all("script"))
+            searchable_html = f"{page_text}\n{script_text}".lower()
             challenge_markers = (
                 "cf-chl-",
                 "just a moment...",
@@ -44,11 +48,14 @@ async def dotflix(url: str) -> DotflixResult:
                 "checking your browser",
                 "enable javascript and cookies",
             )
-            if any(marker in lowered for marker in challenge_markers):
+            if any(marker in searchable_html for marker in challenge_markers):
                 raise DDLException("DotFlix Cloudflare/CAPTCHA challenge detected")
 
-    filename = _value(html, "filename") or "Unknown file"
-    size = _value(html, "formattedFileSize") or "Unknown size"
+    # Provider metadata is commonly serialized inside script tags, so parse
+    # only those script bodies rather than scanning unrelated page markup.
+    metadata = "\n".join(script.get_text() for script in soup.find_all("script"))
+    filename = _value(metadata, "filename") or "Unknown file"
+    size = _value(metadata, "formattedFileSize") or "Unknown size"
     provider_keys = (
         ("FSL Server", "cloudflareFileUrl"),
         ("10Gbps Server", "directUrl"),
@@ -60,7 +67,7 @@ async def dotflix(url: str) -> DotflixResult:
     providers = []
     links = []
     for label, key in provider_keys:
-        value = _value(html, key)
+        value = _value(metadata, key)
         if value and value.startswith(("http://", "https://")) and value not in links:
             links.append(value)
             providers.append((label, value))
