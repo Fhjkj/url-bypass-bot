@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 
 from FZBypass.core.exceptions import DDLException
 from FZBypass.core.destination_cache import get_cached, save_verified
+from FZBypass.core.proxy_pool import next_proxy
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
 CHALLENGE_MARKERS = (
@@ -72,7 +73,7 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
     """
     if cached := get_cached(url):
         return cached
-    proxy = __import__("os").environ.get("BYPASS_PROXY_URL") or None
+    proxy = next_proxy()
     attempts = [None] + ([proxy] if proxy else [])
     errors = []
     for selected_proxy in attempts:
