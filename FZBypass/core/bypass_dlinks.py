@@ -31,33 +31,36 @@ async def filepress(url: str):
                 request_kwargs = {"allow_redirects": True, "headers": headers}
                 if proxy:
                     request_kwargs["proxies"] = {"http": proxy, "https": proxy}
+                api_headers = {**headers, "Content-Type": "application/json"}
+                raw = urlparse(url)
+                file_id = raw.path.rstrip("/").split("/")[-1]
+                json_data = {"id": file_id}
+                api_url = f"{raw.scheme}://{raw.netloc}/api/file/telegram/downlaod/"
+                tg_response = await sess.post(api_url, headers=api_headers, json=json_data, **({"proxies": {"http": proxy, "https": proxy}} if proxy else {}))
+                tg_id = tg_response.json()
+                if tg_response.status_code == 200 and tg_id.get("data"):
+                    data = tg_id["data"]
+                    if isinstance(data, str) and data.startswith(("http://", "https://")):
+                        tg_link = data
+                    else:
+                        t_url = f"https://tghub.xyz/?start={data}"
+                        bot_page = await sess.get(t_url, headers=headers, **({"proxies": {"http": proxy, "https": proxy}} if proxy else {}))
+                        matches = findall("filepress_[a-zA-Z0-9]+_bot", bot_page.text)
+                        if not matches:
+                            last_error = "FilePress Telegram bot was not exposed"
+                            continue
+                        tg_link = f"https://t.me/{matches[0]}/?start={data}"
+                    parse_txt = f"""┏<b>FilePress:</b> <a href="{url}">Click Here</a>
+┗<b>Telegram:</b> <a href="{tg_link}">Click Here</a>"""
+                    return parse_txt
                 page = await sess.get(url, **request_kwargs)
                 if page.status_code != 200:
                     last_error = f"HTTP {page.status_code}"
                     continue
-                raw = urlparse(str(page.url))
-                api_headers = {**headers, "Content-Type": "application/json"}
-                json_data = {"id": raw.path.split("/")[-1]}
-                api_url = f"{raw.scheme}://{raw.netloc}/api/file/telegram/downlaod/"
-                tg_response = await sess.post(api_url, headers=api_headers, json=json_data, **({"proxies": {"http": proxy, "https": proxy}} if proxy else {}))
-                tg_id = tg_response.json()
-                if tg_response.status_code != 200 or not tg_id.get("data"):
+                last_error = f"FilePress API HTTP {tg_response.status_code}"
+                if not tg_id.get("data"):
                     last_error = f"FilePress API HTTP {tg_response.status_code}"
                     continue
-                data = tg_id["data"]
-                if isinstance(data, str) and data.startswith(("http://", "https://")):
-                    tg_link = data
-                else:
-                    t_url = f"https://tghub.xyz/?start={data}"
-                    bot_page = await sess.get(t_url, headers=headers, **({"proxies": {"http": proxy, "https": proxy}} if proxy else {}))
-                    matches = findall("filepress_[a-zA-Z0-9]+_bot", bot_page.text)
-                    if not matches:
-                        last_error = "FilePress Telegram bot was not exposed"
-                        continue
-                    tg_link = f"https://t.me/{matches[0]}/?start={data}"
-                parse_txt = f"""┏<b>FilePress:</b> <a href="{url}">Click Here</a>
-┗<b>Telegram:</b> <a href="{tg_link}">Click Here</a>"""
-                return parse_txt
         except Exception as exc:
             last_error = f"{exc.__class__.__name__}: {exc}"
             continue
