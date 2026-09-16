@@ -142,9 +142,8 @@ async def bypass_check(client, message):
     cards = []
     for source, bypassed, card_kind in parse_data:
         if card_kind:
-            sender = "−AHN HYO SEOP" if card_kind == "dotflix" else "−SR"
             cards.append(
-                f"<blockquote>{sender}\nB <a href=\"{source}\">{source}</a></blockquote>\n"
+                f"<blockquote>B <a href=\"{source}\">{source}</a></blockquote>\n"
                 f"<blockquote>{bypassed}</blockquote>\n\n"
                 "<blockquote>━━━━━━━✦✗✦━━━━━━━</blockquote>\n\n"
                 "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b> ❞</blockquote>"
