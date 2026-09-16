@@ -126,6 +126,12 @@ async def hubcloud(url: str) -> ProviderFileResult:
             if response.status != 200:
                 raise DDLException(f"HubCloud returned HTTP {response.status}")
         generation = re.search(r"var\s+url\s*=\s*'([^']+)'", html)
+        if not generation:
+            generation = re.search(
+                r'<a[^>]+href=["\'](https?://[^"\']+(?:hubcloud\.php|hubvid)[^"\']*)',
+                html,
+                flags=re.I,
+            )
         if generation:
             async with session.get(generation.group(1), allow_redirects=True, ssl=False) as generated:
                 generated_html = await generated.text(errors="ignore")
