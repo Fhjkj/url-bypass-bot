@@ -164,14 +164,18 @@ async def bypass_check(client, message):
     try:
         if len(tg_txt) > 4000:
             chunks = [tg_txt[index : index + 3900] for index in range(0, len(tg_txt), 3900)]
-            await wait_for(wait_msg.edit(chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True), timeout=15)
+            await wait_for(message.reply(chunks[0], reply_to_message_id=message.id, parse_mode=ParseMode.HTML, disable_web_page_preview=True), timeout=15)
             for chunk in chunks[1:]:
-                wait_msg = await wait_for(message.reply(chunk, reply_to_message_id=wait_msg.id, parse_mode=ParseMode.HTML), timeout=15)
+                await wait_for(message.reply(chunk, reply_to_message_id=message.id, parse_mode=ParseMode.HTML), timeout=15)
                 await asleep(0.5)
         elif tg_txt:
-            await wait_for(wait_msg.edit(tg_txt, parse_mode=ParseMode.HTML, disable_web_page_preview=True), timeout=15)
+            await wait_for(message.reply(tg_txt, reply_to_message_id=message.id, parse_mode=ParseMode.HTML, disable_web_page_preview=True), timeout=15)
         else:
-            await wait_for(wait_msg.edit("<i>No links found.</i>"), timeout=15)
+            await wait_for(message.reply("<i>No links found.</i>", reply_to_message_id=message.id), timeout=15)
+        try:
+            await wait_for(wait_msg.delete(), timeout=10)
+        except Exception:
+            pass
     except Exception as error:
         fallback = "\n\n".join(
             f"{source}\n{bypassed.replace('<', '').replace('>', '')}" for source, bypassed, _ in parse_data
