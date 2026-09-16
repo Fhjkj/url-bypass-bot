@@ -5,6 +5,7 @@ from aiohttp import ClientSession, ClientTimeout, ClientError
 from bs4 import BeautifulSoup
 
 from FZBypass.core.exceptions import DDLException
+from FZBypass.core.destination_cache import get_cached, save_verified
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
 CHALLENGE_MARKERS = (
@@ -69,6 +70,8 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
     Set BYPASS_PROXY_URL only to a proxy you own or are authorized to use.
     This intentionally stops on Cloudflare/CAPTCHA pages and does not forge tokens.
     """
+    if cached := get_cached(url):
+        return cached
     proxy = __import__("os").environ.get("BYPASS_PROXY_URL") or None
     attempts = [None] + ([proxy] if proxy else [])
     errors = []
@@ -102,14 +105,18 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                                 if submitted.headers.get("Location"):
                                     candidate = urljoin(action, submitted.headers["Location"])
                                     if _valid_final(candidate, url):
+                                        save_verified(url, candidate, "publisher-form")
                                         return candidate
                                 payload = await submitted.text(errors="ignore")
                                 found = search(r"(?:[\"']url[\"']|Location)\s*[:=]\s*[\"'](https?://[^\"']+)", payload, flags=2)
                                 if found and _valid_final(found.group(1), url):
+                                    save_verified(url, found.group(1), "publisher-form-json")
                                     return found.group(1)
                             raise DDLException(f"Publisher chain stopped before the signed destination form at {current}")
                         if _valid_final(str(response.url), url):
-                            return str(response.url)
+                            final_url = str(response.url)
+                            save_verified(url, final_url, "publisher-redirect")
+                            return final_url
                         raise DDLException(f"Publisher chain stopped before the signed destination form at {current}")
         except (DDLException, ClientError, TimeoutError) as error:
             errors.append(str(error))

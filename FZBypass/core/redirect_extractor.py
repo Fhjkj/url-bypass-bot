@@ -5,6 +5,7 @@ from aiohttp import ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
 
 from FZBypass.core.exceptions import DDLException
+from FZBypass.core.destination_cache import get_cached, save_verified
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -44,6 +45,8 @@ def _html_redirect(html: str, base_url: str) -> str | None:
 
 async def extract_final_destination(url: str, max_hops: int = 8) -> str:
     """Follow redirect responses and common client-side redirect pages."""
+    if cached := get_cached(url):
+        return cached
     timeout = ClientTimeout(total=30)
     headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
     current = url
@@ -80,6 +83,7 @@ async def extract_final_destination(url: str, max_hops: int = 8) -> str:
                         raise DDLException(
                             "Final destination not exposed; shortener ended at an advertisement"
                         )
+                    save_verified(url, final_url, "http")
                     return final_url
             except DDLException:
                 raise
@@ -88,4 +92,5 @@ async def extract_final_destination(url: str, max_hops: int = 8) -> str:
     hostname = (urljoin(current, "/").split("/")[2] or "").lower()
     if any(marker in hostname for marker in INTERMEDIARY_HOST_MARKERS):
         raise DDLException("Final destination not exposed; redirect chain ended at an advertisement")
+    save_verified(url, current, "http")
     return current
