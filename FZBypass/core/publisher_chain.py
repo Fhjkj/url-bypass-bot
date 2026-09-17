@@ -192,7 +192,11 @@ async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
                 )
                 context = await browser.new_context(user_agent=USER_AGENT)
                 page = await context.new_page()
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    await page.goto(url, wait_until="commit", timeout=20000)
+                except Exception:
+                    if not page.url or page.url == "about:blank":
+                        raise
                 for _ in range(60):
                     pages = list(context.pages)
                     for candidate_page in pages:
