@@ -13,6 +13,8 @@ INVALID_HOST_MARKERS = (
     "insurance.",
     "study.",
     "skrresults.com",
+    "softurl.in",
+    "aadilahmadshah.in",
     "google.com/httpservice",
 )
 
