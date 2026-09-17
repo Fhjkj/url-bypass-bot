@@ -166,4 +166,53 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
         except (DDLException, ClientError, TimeoutError) as error:
             errors.append(str(error))
             continue
+    if any(marker in (urlparse(url).hostname or "").lower() for marker in SOFTURL_HOST_MARKERS):
+        browser_result = await _resolve_softurl_browser(url, configured_proxies())
+        if browser_result:
+            save_verified(url, browser_result, "softurl-playwright")
+            return browser_result
     raise DDLException(errors[-1] if errors else "Publisher chain did not reach a final destination")
+
+
+async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
+    """Resolve SoftURL with Chromium, JavaScript, cookies, timers, and authorized proxies."""
+    if not proxies:
+        return None
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return None
+    for proxy in proxies:
+        browser = None
+        try:
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(
+                    headless=True,
+                    proxy={"server": proxy},
+                )
+                context = await browser.new_context(user_agent=USER_AGENT)
+                page = await context.new_page()
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                for _ in range(60):
+                    pages = list(context.pages)
+                    for candidate_page in pages:
+                        candidate_url = candidate_page.url
+                        if re_match := search(r"https?://(?:t\.me|telegram\.me)/[^\s\"'<>]+", candidate_url, flags=2):
+                            return re_match.group(0).rstrip(".,);]")
+                        try:
+                            html = await candidate_page.content()
+                        except Exception:
+                            continue
+                        found = _embedded_telegram(html, url)
+                        if found:
+                            return found
+                    await page.wait_for_timeout(1000)
+        except Exception:
+            continue
+        finally:
+            if browser:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+    return None
