@@ -185,10 +185,16 @@ async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
     for proxy in proxies:
         browser = None
         try:
+            parsed_proxy = urlparse(proxy)
+            proxy_config = {"server": f"{parsed_proxy.scheme}://{parsed_proxy.hostname}:{parsed_proxy.port}"}
+            if parsed_proxy.username:
+                proxy_config["username"] = parsed_proxy.username
+            if parsed_proxy.password:
+                proxy_config["password"] = parsed_proxy.password
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch(
                     headless=True,
-                    proxy={"server": proxy},
+                    proxy=proxy_config,
                 )
                 context = await browser.new_context(user_agent=USER_AGENT)
                 page = await context.new_page()
