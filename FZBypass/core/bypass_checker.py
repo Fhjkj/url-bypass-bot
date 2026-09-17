@@ -403,6 +403,8 @@ async def direct_link_checker(link, onlylink=False):
         blink = await resolve_publisher_chain(link)
     elif bool(match(r"https?:\/\/link\.vipshort\.in\/\S+", link)):
         blink = await resolve_publisher_chain(link)
+    elif bool(match(r"https?:\/\/(?:www\.)?softurl\.in\/\S+", link)):
+        blink = await resolve_publisher_chain(link)
     elif bool(match(r"https?:\/\/(?:www\.)?(?:dotflix\.store|dtflix\.ink)\/share\/\S+", link)):
         blink = await dotflix(link)
     elif bool(match(r"https?:\/\/(?:www\.)?gofile\.io\/d\/\S+", link)):

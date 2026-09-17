@@ -21,6 +21,7 @@ CHALLENGE_MARKERS = (
     "iuam",
 )
 INTERMEDIARY_MARKERS = ("hittracks.in.net", "insurance.", "study.", "skrresults.com", "google.com/httpservice")
+SOFTURL_HOST_MARKERS = ("softurl.in", "aadilahmadshah.in")
 
 
 def _challenge(html: str, title: str = "") -> bool:
@@ -51,7 +52,13 @@ def _location(html: str, base_url: str) -> str | None:
             return urljoin(base_url, found.group(1).strip(" '\""))
     script = " ".join(node.get_text(" ", strip=True) for node in soup.find_all("script"))
     found = search(r"(?:window\.)?location(?:\.href|\.replace)?\s*(?:=|\()\s*[\"']([^\"']+)", script, flags=2)
-    return urljoin(base_url, found.group(1)) if found else None
+    if found:
+        return urljoin(base_url, found.group(1))
+    for node in soup.find_all(attrs={"onclick": True}):
+        found = search(r"window\.open\(\s*[\"']([^\"']+)", node.get("onclick", ""), flags=2)
+        if found:
+            return urljoin(base_url, found.group(1))
+    return None
 
 
 def _embedded_telegram(html: str, source: str) -> str | None:
@@ -132,7 +139,12 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                         form = _form(body, str(response.url))
                         if form:
                             action, fields = form
-                            if not fields or not any(key.lower() in {"token", "signature", "sign", "_token", "key"} for key in fields):
+                            host = (urlparse(str(response.url)).hostname or "").lower()
+                            signed = any(key.lower() in {"token", "signature", "sign", "_token", "key"} for key in fields)
+                            softurl_form = any(marker in host for marker in SOFTURL_HOST_MARKERS) and any(
+                                key.lower() in {"go", "humanverification", "newwpsafelink"} for key in fields
+                            )
+                            if not fields or not (signed or softurl_form):
                                 raise DDLException(f"Publisher chain stopped before the signed destination form at {current}")
                             async with session.post(action, data=fields, allow_redirects=False, proxy=selected_proxy, ssl=False, headers={"Referer": current, "X-Requested-With": "XMLHttpRequest"}) as submitted:
                                 if submitted.headers.get("Location"):
@@ -141,6 +153,10 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                                         save_verified(url, candidate, "publisher-form")
                                         return candidate
                                 payload = await submitted.text(errors="ignore")
+                                next_location = _location(payload, action)
+                                if next_location and next_location not in seen:
+                                    current = next_location
+                                    continue
                                 found = search(r"(?:[\"']url[\"']|Location)\s*[:=]\s*[\"'](https?://[^\"']+)", payload, flags=2)
                                 if found and _valid_final(found.group(1), url):
                                     save_verified(url, found.group(1), "publisher-form-json")
