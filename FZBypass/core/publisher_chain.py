@@ -157,6 +157,22 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                                 if next_location and next_location not in seen:
                                     current = next_location
                                     continue
+                                next_form = _form(payload, action)
+                                if next_form:
+                                    next_action, next_fields = next_form
+                                    async with session.post(next_action, data=next_fields, allow_redirects=False, proxy=selected_proxy, ssl=False, headers={"Referer": action, "X-Requested-With": "XMLHttpRequest"}) as second_submitted:
+                                        if second_submitted.headers.get("Location"):
+                                            current = urljoin(next_action, second_submitted.headers["Location"])
+                                            continue
+                                        second_payload = await second_submitted.text(errors="ignore")
+                                        second_telegram = _embedded_telegram(second_payload, url)
+                                        if second_telegram:
+                                            save_verified(url, second_telegram, "publisher-form-telegram")
+                                            return second_telegram
+                                        second_location = _location(second_payload, next_action)
+                                        if second_location and second_location not in seen:
+                                            current = second_location
+                                            continue
                                 found = search(r"(?:[\"']url[\"']|Location)\s*[:=]\s*[\"'](https?://[^\"']+)", payload, flags=2)
                                 if found and _valid_final(found.group(1), url):
                                     save_verified(url, found.group(1), "publisher-form-json")
