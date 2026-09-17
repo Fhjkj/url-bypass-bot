@@ -232,6 +232,14 @@ async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
                         found = _embedded_telegram(html, url)
                         if found:
                             return found
+                        for selector in ("#wpsafelinkhuman", "#image3", "#wpsafelink-landing button", "#wpsafelink-landing input[type=submit]"):
+                            try:
+                                control = candidate_page.locator(selector).first
+                                if await control.is_visible(timeout=100):
+                                    await control.click(timeout=1000)
+                                    break
+                            except Exception:
+                                continue
                     await page.wait_for_timeout(1000)
         except Exception:
             continue
