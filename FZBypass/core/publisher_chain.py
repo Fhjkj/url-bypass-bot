@@ -313,6 +313,50 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
     raise DDLException(errors[-1] if errors else "Publisher chain did not reach a final destination")
 
 
+async def _playwright_softurl_explicit(page, source: str) -> str | None:
+    """Complete the known SoftURL image-verification and Surajit countdown flow."""
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+    except Exception:
+        pass
+    for _ in range(45):
+        try:
+            await page.wait_for_timeout(1000)
+            html = await page.content()
+        except Exception:
+            continue
+        current = page.url
+        if _valid_final(current, source):
+            if "devuploads.com/" in current.lower():
+                return current
+        surajit = _surajit_destination(html, current)
+        if surajit and _valid_final(surajit, source):
+            return surajit
+        generated = _location(html, current)
+        if generated and "safelink_redirect=" in generated and generated != current:
+            try:
+                await page.goto(generated, wait_until="domcontentloaded", timeout=20000)
+                continue
+            except Exception:
+                continue
+        if "click on any" in html.lower():
+            article_url = current
+            try:
+                image = page.locator("article img, .entry-content img, main img, img").first
+                await image.click(timeout=2000)
+                await page.wait_for_timeout(1000)
+                await page.goto(article_url, wait_until="domcontentloaded", timeout=20000)
+            except Exception:
+                pass
+            continue
+        if "#wpsafelinkhuman" in html.lower():
+            try:
+                await page.locator("#wpsafelinkhuman").click(timeout=2000)
+            except Exception:
+                pass
+    return None
+
+
 async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
     """Resolve SoftURL with Chromium, JavaScript, cookies, timers, and authorized proxies."""
     try:
@@ -343,6 +387,9 @@ async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
                 except Exception:
                     if not page.url or page.url == "about:blank":
                         raise
+                explicit = await _playwright_softurl_explicit(page, url)
+                if explicit:
+                    return explicit
                 for _ in range(35):
                     pages = list(context.pages)
                     for candidate_page in pages:
