@@ -216,6 +216,10 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
         if curl_result:
             save_verified(url, curl_result, "softurl-curl-cffi")
             return curl_result
+        browser_result = await _resolve_softurl_browser(url, configured_proxies())
+        if browser_result:
+            save_verified(url, browser_result, "softurl-playwright")
+            return browser_result
     attempts = [None, *configured_proxies()]
     errors = []
     for selected_proxy in attempts:
@@ -337,7 +341,7 @@ async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
                 except Exception:
                     if not page.url or page.url == "about:blank":
                         raise
-                for _ in range(60):
+                for _ in range(35):
                     pages = list(context.pages)
                     for candidate_page in pages:
                         candidate_url = candidate_page.url
@@ -353,6 +357,13 @@ async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
                         surajit = _surajit_destination(html, candidate_url)
                         if surajit and _valid_final(surajit, url):
                             return surajit
+                        generated = _location(html, candidate_url)
+                        if generated and generated not in {candidate_url, url}:
+                            try:
+                                await candidate_page.goto(generated, wait_until="domcontentloaded", timeout=15000)
+                                continue
+                            except Exception:
+                                pass
                         if "click on any" in html.lower() and candidate_url not in image_return_done:
                             try:
                                 image = candidate_page.locator("article img, .entry-content img, main img, img").first
