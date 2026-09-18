@@ -79,6 +79,7 @@ async def bypass_check(client, message):
     ad_domains = (
         "arolinks.com", "gplinks.co", "vplink.in", "short4cash.com",
         "vipshort.in", "adsfly", "adrinolinks", "archive.toonworld4all.me",
+        "softurl.in", "surajitlinks.in", "surajitmodz.", "djbasskingg.com",
     )
     operation = "🔗 Bypassing ads..." if any(any(domain in item.lower() for domain in ad_domains) for item in tlinks) else "🔎 Scraping..."
     if operation != "🔎 Scraping...":

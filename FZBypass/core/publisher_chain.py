@@ -298,6 +298,8 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                                     return found.group(1)
                             raise DDLException(f"Publisher chain stopped before the signed destination form at {current}")
                         if any(marker in (urlparse(str(response.url)).hostname or "").lower() for marker in INTERMEDIARY_MARKERS):
+                            if any(marker in (urlparse(str(response.url)).hostname or "").lower() for marker in SOFTURL_HOST_MARKERS + ("surajitlinks.in", "surajitmodz.")):
+                                raise DDLException(f"Ad gate did not expose the final destination at {current}")
                             raise DDLException(f"Publisher chain reached an intermediary article without exposing the final destination at {current}")
                         raise DDLException(f"Publisher chain stopped before the signed destination form at {current}")
         except (DDLException, ClientError, TimeoutError) as error:
