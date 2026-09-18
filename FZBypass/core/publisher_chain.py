@@ -1,4 +1,6 @@
+import asyncio
 from base64 import b64decode
+from json import loads
 from re import findall, search
 from urllib.parse import urljoin, urlparse
 
@@ -20,7 +22,7 @@ CHALLENGE_MARKERS = (
     "checking your browser",
     "iuam",
 )
-INTERMEDIARY_MARKERS = ("hittracks.in.net", "insurance.", "study.", "skrresults.com", "google.com/httpservice", "softurl.in", "aadilahmadshah.in")
+INTERMEDIARY_MARKERS = ("hittracks.in.net", "insurance.", "study.", "skrresults.com", "google.com/httpservice", "softurl.in", "aadilahmadshah.in", "surajitlinks.in", "surajitmodz.")
 SOFTURL_HOST_MARKERS = ("softurl.in", "aadilahmadshah.in")
 
 
@@ -31,7 +33,10 @@ def _challenge(html: str, title: str = "") -> bool:
 
 def _form(html: str, base_url: str):
     soup = BeautifulSoup(html, "html.parser")
-    form = soup.find("form")
+    forms = soup.find_all("form")
+    form = next((candidate for candidate in forms if candidate.find("input", attrs={"name": "newwpsafelink"})), None)
+    form = form or next((candidate for candidate in forms if candidate.find("input", attrs={"name": "go"})), None)
+    form = form or (forms[0] if forms else None)
     if not form:
         return None
     action = urljoin(base_url, form.get("action") or base_url)
@@ -58,7 +63,25 @@ def _location(html: str, base_url: str) -> str | None:
         found = search(r"window\.open\(\s*[\"']([^\"']+)", node.get("onclick", ""), flags=2)
         if found:
             return urljoin(base_url, found.group(1))
+    found = search(r"([\"'])(https?://[^\"']*safelink_redirect=[^\"']+)\1", html, flags=2)
+    if found:
+        return found.group(2).replace("&amp;", "&")
     return None
+
+
+def _safelink_payload_location(html: str, base_url: str) -> str | None:
+    """Extract WP Safelink's encoded `linkr` redirect from hidden JSON."""
+    soup = BeautifulSoup(html, "html.parser")
+    for item in soup.find_all("input", attrs={"name": "newwpsafelink"}):
+        raw = item.get("value", "")
+        try:
+            payload = loads(b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", "ignore"))
+        except Exception:
+            continue
+        linkr = payload.get("linkr", "")
+        if linkr.startswith("http"):
+            return linkr
+    return _location(html, base_url)
 
 
 def _embedded_telegram(html: str, source: str) -> str | None:
@@ -95,6 +118,91 @@ def _valid_final(candidate: str, source: str) -> bool:
     return not any(marker in host for marker in INTERMEDIARY_MARKERS)
 
 
+def _surajit_destination(html: str, base_url: str) -> str | None:
+    """Extract Surajit Links' post-countdown Get Link target."""
+    soup = BeautifulSoup(html, "html.parser")
+    for anchor in soup.find_all("a", href=True):
+        href = urljoin(base_url, anchor["href"])
+        label = anchor.get_text(" ", strip=True).lower()
+        if label == "get link" or "devuploads.com/" in href.lower():
+            return href
+    return None
+
+
+def _resolve_softurl_curl_sync(url: str, proxy: str) -> str | None:
+    """Run the WP Safelink sequence with Chrome TLS impersonation and one proxy."""
+    from curl_cffi.requests import Session
+
+    headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.9"}
+    with Session(impersonate="chrome124", headers=headers) as session:
+        current = url
+        seen = set()
+        for _ in range(12):
+            if current in seen:
+                return None
+            seen.add(current)
+            response = session.get(current, proxy=proxy, allow_redirects=False, timeout=18, verify=False)
+            if response.status_code in {301, 302, 303, 307, 308} and response.headers.get("Location"):
+                current = urljoin(current, response.headers["Location"])
+                continue
+            body = response.text
+            telegram = _embedded_telegram(body, url)
+            if telegram:
+                return telegram
+            surajit = _surajit_destination(body, current)
+            if surajit and surajit not in seen:
+                current = surajit
+                continue
+            form = _form(body, current)
+            if form:
+                action, fields = form
+                posted = session.post(action, data=fields, proxy=proxy, allow_redirects=False, timeout=18, verify=False, headers={"Referer": current})
+                if posted.headers.get("Location"):
+                    current = urljoin(action, posted.headers["Location"])
+                    continue
+                posted_body = posted.text
+                second_form = _form(posted_body, action)
+                if second_form:
+                    second_action, second_fields = second_form
+                    second = session.post(second_action, data=second_fields, proxy=proxy, allow_redirects=False, timeout=18, verify=False, headers={"Referer": action})
+                    if second.headers.get("Location"):
+                        current = urljoin(second_action, second.headers["Location"])
+                        continue
+                    second_body = second.text
+                    telegram = _embedded_telegram(second_body, url)
+                    if telegram:
+                        return telegram
+                    posted_location = _safelink_payload_location(posted_body, action)
+                    if posted_location and posted_location not in seen:
+                        current = posted_location
+                        continue
+                    next_location = _safelink_payload_location(second_body, second_action)
+                    if next_location and next_location not in seen:
+                        current = next_location
+                        continue
+                next_location = _safelink_payload_location(posted_body, action)
+                if next_location and next_location not in seen:
+                    current = next_location
+                    continue
+                continue
+            if _valid_final(str(response.url), url):
+                return str(response.url)
+            return None
+    return None
+
+
+async def _resolve_softurl_curl(url: str, proxies: list[str]) -> str | None:
+    # Direct access is fastest; proxies are a fallback for 403/rate-limited egress.
+    for proxy in [None, *proxies]:
+        try:
+            result = await asyncio.wait_for(asyncio.to_thread(_resolve_softurl_curl_sync, url, proxy), timeout=55)
+            if result:
+                return result
+        except Exception:
+            continue
+    return None
+
+
 async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
     """Follow ordinary redirects/forms using direct access and an authorized proxy.
 
@@ -103,6 +211,11 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
     """
     if cached := get_cached(url):
         return cached
+    if any(marker in (urlparse(url).hostname or "").lower() for marker in SOFTURL_HOST_MARKERS):
+        curl_result = await _resolve_softurl_curl(url, configured_proxies())
+        if curl_result:
+            save_verified(url, curl_result, "softurl-curl-cffi")
+            return curl_result
     attempts = [None, *configured_proxies()]
     errors = []
     for selected_proxy in attempts:
@@ -126,7 +239,11 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                         if embedded:
                             save_verified(url, embedded, "embedded-telegram")
                             return embedded
-                        location = _location(body, str(response.url))
+                        surajit = _surajit_destination(body, str(response.url))
+                        if surajit and surajit not in seen:
+                            current = surajit
+                            continue
+                        location = _safelink_payload_location(body, str(response.url))
                         if location and location not in seen:
                             current = location
                             continue
@@ -151,10 +268,6 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                                         save_verified(url, candidate, "publisher-form")
                                         return candidate
                                 payload = await submitted.text(errors="ignore")
-                                next_location = _location(payload, action)
-                                if next_location and next_location not in seen:
-                                    current = next_location
-                                    continue
                                 next_form = _form(payload, action)
                                 if next_form:
                                     next_action, next_fields = next_form
@@ -167,10 +280,14 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                                         if second_telegram:
                                             save_verified(url, second_telegram, "publisher-form-telegram")
                                             return second_telegram
-                                        second_location = _location(second_payload, next_action)
+                                        second_location = _safelink_payload_location(second_payload, next_action)
                                         if second_location and second_location not in seen:
                                             current = second_location
                                             continue
+                                next_location = _safelink_payload_location(payload, action)
+                                if next_location and next_location not in seen:
+                                    current = next_location
+                                    continue
                                 found = search(r"(?:[\"']url[\"']|Location)\s*[:=]\s*[\"'](https?://[^\"']+)", payload, flags=2)
                                 if found and _valid_final(found.group(1), url):
                                     save_verified(url, found.group(1), "publisher-form-json")
@@ -192,21 +309,21 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
 
 async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
     """Resolve SoftURL with Chromium, JavaScript, cookies, timers, and authorized proxies."""
-    if not proxies:
-        return None
     try:
         from playwright.async_api import async_playwright
     except ImportError:
         return None
-    for proxy in proxies:
+    for proxy in [None, *proxies]:
         browser = None
         try:
-            parsed_proxy = urlparse(proxy)
-            proxy_config = {"server": f"{parsed_proxy.scheme}://{parsed_proxy.hostname}:{parsed_proxy.port}"}
-            if parsed_proxy.username:
-                proxy_config["username"] = parsed_proxy.username
-            if parsed_proxy.password:
-                proxy_config["password"] = parsed_proxy.password
+            proxy_config = None
+            if proxy:
+                parsed_proxy = urlparse(proxy)
+                proxy_config = {"server": f"{parsed_proxy.scheme}://{parsed_proxy.hostname}:{parsed_proxy.port}"}
+                if parsed_proxy.username:
+                    proxy_config["username"] = parsed_proxy.username
+                if parsed_proxy.password:
+                    proxy_config["password"] = parsed_proxy.password
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch(
                     headless=True,
@@ -214,6 +331,7 @@ async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
                 )
                 context = await browser.new_context(user_agent=USER_AGENT)
                 page = await context.new_page()
+                image_return_done = set()
                 try:
                     await page.goto(url, wait_until="commit", timeout=20000)
                 except Exception:
@@ -232,6 +350,21 @@ async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
                         found = _embedded_telegram(html, url)
                         if found:
                             return found
+                        surajit = _surajit_destination(html, candidate_url)
+                        if surajit and _valid_final(surajit, url):
+                            return surajit
+                        if "click on any" in html.lower() and candidate_url not in image_return_done:
+                            try:
+                                image = candidate_page.locator("article img, .entry-content img, main img, img").first
+                                if await image.is_visible(timeout=100):
+                                    image_return_done.add(candidate_url)
+                                    await image.click(timeout=1500)
+                                    await candidate_page.wait_for_timeout(1000)
+                                    await candidate_page.go_back(wait_until="domcontentloaded", timeout=10000)
+                                    await candidate_page.wait_for_timeout(1500)
+                                    continue
+                            except Exception:
+                                image_return_done.add(candidate_url)
                         for selector in ("#wpsafelinkhuman", "#image3", "#wpsafelink-landing button", "#wpsafelink-landing input[type=submit]"):
                             try:
                                 control = candidate_page.locator(selector).first
