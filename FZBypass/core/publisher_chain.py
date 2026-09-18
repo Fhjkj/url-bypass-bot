@@ -373,7 +373,9 @@ async def _resolve_softurl_browser(url: str, proxies: list[str]) -> str | None:
                                     image_return_done.add(candidate_url)
                                     await image.click(timeout=1500)
                                     await candidate_page.wait_for_timeout(1000)
-                                    await candidate_page.go_back(wait_until="domcontentloaded", timeout=10000)
+                                    # The ad click can submit a POST, making history.back()
+                                    # fail with ERR_CACHE_MISS. Reopen the article instead.
+                                    await candidate_page.goto(candidate_url, wait_until="domcontentloaded", timeout=15000)
                                     await candidate_page.wait_for_timeout(1500)
                                     continue
                             except Exception:
