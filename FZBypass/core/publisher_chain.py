@@ -274,6 +274,15 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                                     ),
                                     None,
                                 )
+                            if not browser_destination:
+                                browser_destination = next(
+                                    (
+                                        candidate.rstrip(".,);]")
+                                        for candidate in findall(r"https?://[^\s\"'<>]+", browser_html, flags=2)
+                                        if _valid_final(candidate, current)
+                                    ),
+                                    None,
+                                )
                             if browser_destination:
                                 current = browser_destination
                                 continue

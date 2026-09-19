@@ -273,7 +273,12 @@ async def solve_turnstile(
                 # Wait for the challenge to resolve or timeout.
                 deadline = time.time() + (MAX_WAIT_MS / 1000)
                 resolved = False
+                token_detected = None
                 while time.time() < deadline:
+                    token_detected = await _detect_turnstile_token(page)
+                    if token_detected:
+                        resolved = True
+                        break
                     if not await _has_challenge(page):
                         resolved = True
                         break
@@ -296,13 +301,21 @@ async def solve_turnstile(
                     # In headless runs the callback can fire without completing
                     # navigation, so submit the same form explicitly and wait
                     # for the server-generated destination page.
-                    try:
-                        form = page.locator("form").first
-                        if await form.count():
-                            await form.evaluate("form => form.requestSubmit ? form.requestSubmit() : form.submit()")
-                            await page.wait_for_timeout(3000)
-                    except Exception as exc:
-                        LOGGER.debug("Turnstile form submission fallback: %s", exc)
+                # Some Turnstile versions remove the challenge markers but
+                # keep the response in an iframe, so a token field is not
+                # always visible to the page locator. Jobsheel's form is safe
+                # to submit once the challenge has cleared.
+                try:
+                    form = page.locator("form").first
+                    if await form.count() and (token or not await _has_challenge(page)):
+                        await form.evaluate("form => form.requestSubmit ? form.requestSubmit() : form.submit()")
+                        try:
+                            await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                        except Exception:
+                            pass
+                        await page.wait_for_timeout(5000)
+                except Exception as exc:
+                    LOGGER.debug("Turnstile form submission fallback: %s", exc)
 
                 cookies = await context.cookies()
                 result.cookies = cookies
