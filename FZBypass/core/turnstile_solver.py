@@ -279,6 +279,7 @@ async def solve_turnstile(
                 deadline = time.time() + (MAX_WAIT_MS / 1000)
                 resolved = False
                 token_detected = None
+                form_submitted = False
                 while time.time() < deadline:
                     token_detected = await _detect_turnstile_token(page)
                     if token_detected:
@@ -287,11 +288,13 @@ async def solve_turnstile(
                     if not await _has_challenge(page):
                         resolved = True
                         break
-                    # Some Turnstile widgets auto-solve on click.
+                    # Cloudflare Turnstile renders inside an iframe; interact with it.
                     try:
-                        widget = page.locator("[data-sitekey], .cf-turnstile, #cf-turnstile, iframe[src*='challenges.cloudflare.com']").first
-                        if await widget.count() and await widget.is_visible(timeout=500):
-                            await widget.click(timeout=2000)
+                        iframe = page.locator("iframe[src*='challenges.cloudflare.com']").first
+                        if await iframe.count() and await iframe.is_visible(timeout=500):
+                            # Click the Turnstile checkbox inside the iframe.
+                            await iframe.click(timeout=2000)
+                            await page.wait_for_timeout(2000)
                     except Exception:
                         pass
                     # Some ad gates require clicking a link ("Click on the first link").
@@ -309,33 +312,21 @@ async def solve_turnstile(
                     except Exception:
                         break
 
-                result.final_url = page.url
-                try:
-                    result.html = await page.content()
-                except Exception:
-                    result.html = None
-
-                # Collect token and cookies regardless of resolution status.
-                token = await _detect_turnstile_token(page)
-                if token:
-                    result.token = token
-                    # Jobsheel uses the Turnstile callback to submit its form.
-                    # In headless runs the callback can fire without completing
-                    # navigation, so submit the same form explicitly and wait
-                    # for the server-generated destination page.
-                # Some Turnstile versions remove the challenge markers but
-                # keep the response in an iframe, so a token field is not
-                # always visible to the page locator. Jobsheel's form is safe
-                # to submit once the challenge has cleared.
+                # After the loop, try submitting the form if a Turnstile token exists
+                # or the challenge appears cleared (Jobsheel auto-submits via callback).
                 try:
                     form = page.locator("form").first
-                    if await form.count() and (token or not await _has_challenge(page)):
-                        await form.evaluate("form => form.requestSubmit ? form.requestSubmit() : form.submit()")
-                        try:
-                            await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                        except Exception:
-                            pass
-                        await page.wait_for_timeout(5000)
+                    if await form.count():
+                        token = await _detect_turnstile_token(page)
+                        challenge_cleared = not await _has_challenge(page)
+                        if token or challenge_cleared:
+                            await form.evaluate("form => form.requestSubmit ? form.requestSubmit() : form.submit()")
+                            form_submitted = True
+                            try:
+                                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                            except Exception:
+                                pass
+                            await page.wait_for_timeout(5000)
                 except Exception as exc:
                     LOGGER.debug("Turnstile form submission fallback: %s", exc)
 
