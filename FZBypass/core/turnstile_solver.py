@@ -68,12 +68,36 @@ _browser_install_attempted = False
 
 def _resolve_browser_executable() -> Optional[str]:
     configured = os.getenv("CHROMIUM_PATH")
-    if configured and Path(configured).exists():
+    if configured and Path(configured).is_file() and os.access(configured, os.X_OK):
         return configured
     for name in ("chromium", "chromium-browser", "google-chrome"):
         found = shutil.which(name)
         if found:
             return found
+    # Playwright's installer does not add its downloaded browser to PATH. If
+    # we install it into a writable Render directory, explicitly locate the
+    # real Chromium binary instead of letting Playwright fall back to its
+    # default cache (which may be /opt/render/.cache and may not exist).
+    roots = []
+    for value in (
+        os.getenv("PLAYWRIGHT_BROWSERS_PATH"),
+        os.getenv("PLAYWRIGHT_RUNTIME_BROWSERS_PATH"),
+        "/tmp/playwright-browsers",
+        "/ms-playwright",
+    ):
+        if value and value != "0":
+            roots.append(Path(value))
+    package_root = Path(__file__).resolve().parents[2]
+    roots.extend((package_root / ".local-browsers", package_root / "node_modules" / "playwright-core"))
+    for root in roots:
+        if not root.is_dir():
+            continue
+        candidates = sorted(root.glob("**/chrome-linux/chrome"))
+        candidates += sorted(root.glob("**/chrome-headless-shell-linux64/chrome-headless-shell"))
+        candidates += sorted(root.glob("**/chrome"))
+        for candidate in candidates:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
     return None
 
 
