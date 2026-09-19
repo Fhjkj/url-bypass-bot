@@ -254,6 +254,29 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                             cookies = {c["name"]: c["value"] for c in (result.cookies or []) if c.get("name")}
                             if cookies:
                                 session.headers.update({"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())})
+                            browser_html = result.html or ""
+                            browser_locations = (
+                                _safelink_payload_location(browser_html, current),
+                                _location(browser_html, current),
+                                _surajit_destination(browser_html, current),
+                            )
+                            browser_destination = next(
+                                (candidate for candidate in browser_locations if candidate and _valid_final(candidate, current)),
+                                None,
+                            )
+                            if not browser_destination:
+                                soup = BeautifulSoup(browser_html, "html.parser")
+                                browser_destination = next(
+                                    (
+                                        urljoin(current, anchor.get("href", ""))
+                                        for anchor in soup.find_all("a", href=True)
+                                        if _valid_final(urljoin(current, anchor.get("href", "")), current)
+                                    ),
+                                    None,
+                                )
+                            if browser_destination:
+                                current = browser_destination
+                                continue
                             if result.final_url and result.final_url not in seen:
                                 current = result.final_url
                                 continue

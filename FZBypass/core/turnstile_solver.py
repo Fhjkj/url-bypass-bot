@@ -52,6 +52,7 @@ class SolveResult:
     token: Optional[str] = None
     cookies: Optional[list] = None
     clearance_cookie: Optional[str] = None
+    html: Optional[str] = None
     error: Optional[str] = None
     elapsed_ms: int = 0
 
@@ -246,6 +247,10 @@ async def solve_turnstile(
                         break
 
                 result.final_url = page.url
+                try:
+                    result.html = await page.content()
+                except Exception:
+                    result.html = None
 
                 # Collect token and cookies regardless of resolution status.
                 token = await _detect_turnstile_token(page)
