@@ -4,6 +4,11 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
+    plan: starter
+    disk:
+      name: fz-chromium-profile
+      mountPath: /tmp/chromium-profile
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.10
@@ -21,3 +26,9 @@ services:
         sync: false
       - key: GOFILE_API_TOKEN
         sync: false
+      - key: CHROMIUM_PROFILE_DIR
+        value: /tmp/chromium-profile
+      - key: SOLVE_TIMEOUT_MS
+        value: 45000
+      - key: SOLVE_MAX_WAIT_MS
+        value: 90000
