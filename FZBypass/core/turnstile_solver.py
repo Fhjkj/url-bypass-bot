@@ -58,13 +58,15 @@ def _ensure_profile_dir() -> Path:
     return path
 
 
-def _detect_turnstile_token(page) -> Optional[str]:
+async def _detect_turnstile_token(page) -> Optional[str]:
     """Try to extract a Turnstile token from the page DOM."""
     for selector in TURNSTILE_SELECTORS:
         try:
             element = page.locator(selector).first
-            if element and element.is_visible() is False:
-                value = element.get_attribute("value")
+            if await element.count() == 0:
+                continue
+            if not await element.is_visible():
+                value = await element.get_attribute("value")
                 if value:
                     return value
         except Exception:
@@ -72,7 +74,7 @@ def _detect_turnstile_token(page) -> Optional[str]:
 
     # Fallback: look for the token in any script or hidden input text.
     try:
-        token = page.evaluate("""() => {
+        token = await page.evaluate("""() => {
             const inputs = Array.from(document.querySelectorAll('input'));
             for (const input of inputs) {
                 if (input.type === 'hidden' && input.value && /token/i.test(input.name)) {
@@ -86,18 +88,15 @@ def _detect_turnstile_token(page) -> Optional[str]:
             }
             return null;
         }""")
-        if token:
-            return token
+        return token or None
     except Exception:
-        pass
-
-    return None
+        return None
 
 
-def _extract_clearance_cookie(context) -> Optional[str]:
+async def _extract_clearance_cookie(context) -> Optional[str]:
     """Return the cf_clearance cookie value if present."""
     try:
-        cookies = context.cookies()
+        cookies = await context.cookies()
         for cookie in cookies:
             if cookie.get("name") == "cf_clearance":
                 return cookie.get("value")
@@ -106,14 +105,14 @@ def _extract_clearance_cookie(context) -> Optional[str]:
     return None
 
 
-def _has_challenge(page) -> bool:
+async def _has_challenge(page) -> bool:
     """Check whether the page is still presenting a Cloudflare challenge."""
     try:
-        title = (page.title() or "").lower()
+        title = (await page.title() or "").lower()
     except Exception:
         title = ""
     try:
-        body_text = page.locator("body").inner_text(timeout=2000).lower()
+        body_text = (await page.locator("body").inner_text(timeout=2000)).lower()
     except Exception:
         body_text = ""
     combined = f"{title}\n{body_text}"
@@ -156,7 +155,7 @@ async def solve_turnstile(
                 deadline = time.time() + (MAX_WAIT_MS / 1000)
                 resolved = False
                 while time.time() < deadline:
-                    if not _has_challenge(page):
+                    if not await _has_challenge(page):
                         resolved = True
                         break
                     try:
@@ -167,15 +166,16 @@ async def solve_turnstile(
                 result.final_url = page.url
 
                 # Collect token and cookies regardless of resolution status.
-                token = _detect_turnstile_token(page)
+                token = await _detect_turnstile_token(page)
                 if token:
                     result.token = token
 
-                cookies = context.cookies()
+                cookies = await context.cookies()
                 result.cookies = cookies
-                result.clearance_cookie = _extract_clearance_cookie(context)
+                result.clearance_cookie = await _extract_clearance_cookie(context)
+                challenge_present = await _has_challenge(page)
 
-                if resolved or token or result.clearance_cookie:
+                if not challenge_present or token or result.clearance_cookie:
                     result.success = True
                 else:
                     result.error = "Cloudflare challenge not resolved within timeout"
