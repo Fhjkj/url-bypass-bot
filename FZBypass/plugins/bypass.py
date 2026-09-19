@@ -97,8 +97,9 @@ async def bypass_check(client, message):
     parse_data = []
     for result, link in zip(completed_tasks, tlinks):
         source = escape(str(link), quote=True)
-        if isinstance(result, Exception):
-            bypassed = f"❌ {escape(str(result), quote=True)}"
+        if isinstance(result, BaseException):
+            error_text = str(result).strip() or result.__class__.__name__
+            bypassed = f"❌ {escape(error_text, quote=True)}"
         elif isinstance(result, GofileResult):
             filename = escape(result.filename, quote=True)
             total_size = escape(result.total_size, quote=True)
