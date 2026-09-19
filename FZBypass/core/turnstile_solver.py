@@ -294,6 +294,16 @@ async def solve_turnstile(
                             await widget.click(timeout=2000)
                     except Exception:
                         pass
+                    # Some ad gates require clicking a link ("Click on the first link").
+                    try:
+                        body_text = (await page.locator("body").inner_text(timeout=2000)).lower()
+                        if "click on the first link" in body_text or "click the first link" in body_text:
+                            link = page.locator("a[href^='http']").first
+                            if await link.count() and await link.is_visible(timeout=500):
+                                await link.click(timeout=2000)
+                                await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    except Exception:
+                        pass
                     try:
                         await page.wait_for_timeout(1000)
                     except Exception:
