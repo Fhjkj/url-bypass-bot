@@ -38,11 +38,16 @@ CHALLENGE_MARKERS = (
     "cf-chl-status",
     "cloudflare",
     "verify you are human",
+    "verify to continue",
     "checking your browser",
     "captcha",
     "recaptcha",
     "enable javascript and cookies",
     "just a moment",
+    "turnstile",
+    "iuam",
+    "i am human",
+    "click on the first link",
 )
 
 
@@ -282,6 +287,13 @@ async def solve_turnstile(
                     if not await _has_challenge(page):
                         resolved = True
                         break
+                    # Some Turnstile widgets auto-solve on click.
+                    try:
+                        widget = page.locator("[data-sitekey], .cf-turnstile, #cf-turnstile, iframe[src*='challenges.cloudflare.com']").first
+                        if await widget.count() and await widget.is_visible(timeout=500):
+                            await widget.click(timeout=2000)
+                    except Exception:
+                        pass
                     try:
                         await page.wait_for_timeout(1000)
                     except Exception:

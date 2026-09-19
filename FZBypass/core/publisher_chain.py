@@ -19,11 +19,14 @@ CHALLENGE_MARKERS = (
     "cf-ray",
     "recaptcha",
     "verify you are human",
+    "verify to continue",
     "enable javascript and cookies",
     "checking your browser",
     "please verify to continue",
     "turnstile",
     "iuam",
+    "i am human",
+    "click on the first link",
 )
 INTERMEDIARY_MARKERS = ("hittracks.in.net", "insurance.", "study.", "skrresults.com", "google.com/httpservice", "softurl.in", "aadilahmadshah.in", "surajitlinks.in", "surajitmodz.", "jobsheel.com")
 SOFTURL_HOST_MARKERS = ("softurl.in", "aadilahmadshah.in")
