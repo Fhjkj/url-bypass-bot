@@ -7,6 +7,7 @@ resulting token or clearance cookies. It is used by the /solve and
 """
 import asyncio
 import os
+import shutil
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -128,21 +129,24 @@ async def solve_turnstile(
     start = time.time()
     result = SolveResult(success=False, url=url, final_url="", elapsed_ms=0)
     profile_dir = _ensure_profile_dir()
-    executable = os.getenv("CHROMIUM_PATH", "/usr/bin/chromium")
+    configured_executable = os.getenv("CHROMIUM_PATH")
+    executable = configured_executable or shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
 
     try:
         async with async_playwright() as playwright:
-            context = await playwright.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                headless=headless,
-                executable_path=executable,
-                args=[
+            launch_options = {
+                "user_data_dir": str(profile_dir),
+                "headless": headless,
+                "args": [
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-blink-features=AutomationControlled",
                 ],
-                viewport={"width": 1280, "height": 720},
-            )
+                "viewport": {"width": 1280, "height": 720},
+            }
+            if executable:
+                launch_options["executable_path"] = executable
+            context = await playwright.chromium.launch_persistent_context(**launch_options)
             try:
                 page = context.pages[0] if context.pages else await context.new_page()
                 try:

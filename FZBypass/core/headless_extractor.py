@@ -1,4 +1,5 @@
 import os
+import shutil
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -31,13 +32,16 @@ async def extract_headless_destination(url: str, timeout_ms: int = 30000) -> str
     When a Turnstile/Cloudflare challenge is detected, the persistent Chromium
     profile is used to clear it and the resulting final URL is returned.
     """
-    executable = os.getenv("CHROMIUM_PATH", "/usr/bin/chromium")
+    configured_executable = os.getenv("CHROMIUM_PATH")
+    executable = configured_executable or shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(
-            headless=True,
-            executable_path=executable,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
-        )
+        launch_options = {
+            "headless": True,
+            "args": ["--no-sandbox", "--disable-dev-shm-usage"],
+        }
+        if executable:
+            launch_options["executable_path"] = executable
+        browser = await playwright.chromium.launch(**launch_options)
         try:
             page = await browser.new_page()
             try:
