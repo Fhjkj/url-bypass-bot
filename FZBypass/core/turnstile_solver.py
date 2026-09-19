@@ -8,6 +8,9 @@ resulting token or clearance cookies. It is used by the /solve and
 import asyncio
 import os
 import shutil
+import subprocess
+import sys
+import threading
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -57,6 +60,58 @@ def _ensure_profile_dir() -> Path:
     path = Path(PROFILE_DIR)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+_browser_install_lock = threading.Lock()
+_browser_install_attempted = False
+
+
+def _resolve_browser_executable() -> Optional[str]:
+    configured = os.getenv("CHROMIUM_PATH")
+    if configured and Path(configured).exists():
+        return configured
+    for name in ("chromium", "chromium-browser", "google-chrome"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def _ensure_playwright_browser() -> Optional[str]:
+    """Ensure a writable Chromium install exists for native Render runtimes."""
+    global _browser_install_attempted
+    executable = _resolve_browser_executable()
+    if executable:
+        return executable
+    with _browser_install_lock:
+        executable = _resolve_browser_executable()
+        if executable:
+            return executable
+        if _browser_install_attempted:
+            return None
+        _browser_install_attempted = True
+        browser_path = Path(os.getenv("PLAYWRIGHT_RUNTIME_BROWSERS_PATH", "/tmp/playwright-browsers"))
+        browser_path.mkdir(parents=True, exist_ok=True)
+        env = os.environ.copy()
+        env["PLAYWRIGHT_BROWSERS_PATH"] = str(browser_path)
+        marker = browser_path / ".chromium-installed"
+        try:
+            if not marker.exists():
+                subprocess.run(
+                    [sys.executable, "-m", "playwright", "install", "chromium"],
+                    check=True,
+                    timeout=240,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                marker.touch()
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browser_path)
+        except Exception as exc:
+            LOGGER.error("Unable to install runtime Chromium: %s", exc)
+            return None
+    return _resolve_browser_executable()
 
 
 async def _detect_turnstile_token(page) -> Optional[str]:
@@ -129,8 +184,7 @@ async def solve_turnstile(
     start = time.time()
     result = SolveResult(success=False, url=url, final_url="", elapsed_ms=0)
     profile_dir = _ensure_profile_dir()
-    configured_executable = os.getenv("CHROMIUM_PATH")
-    executable = configured_executable or shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
+    executable = _ensure_playwright_browser()
 
     try:
         async with async_playwright() as playwright:

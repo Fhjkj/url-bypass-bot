@@ -4,7 +4,7 @@ import shutil
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 from FZBypass.core.exceptions import DDLException
-from FZBypass.core.turnstile_solver import solve_turnstile
+from FZBypass.core.turnstile_solver import _ensure_playwright_browser, solve_turnstile
 
 INTERMEDIARY_HOST_MARKERS = (
     "hittracks.in.net",
@@ -32,8 +32,7 @@ async def extract_headless_destination(url: str, timeout_ms: int = 30000) -> str
     When a Turnstile/Cloudflare challenge is detected, the persistent Chromium
     profile is used to clear it and the resulting final URL is returned.
     """
-    configured_executable = os.getenv("CHROMIUM_PATH")
-    executable = configured_executable or shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
+    executable = _ensure_playwright_browser()
     async with async_playwright() as playwright:
         launch_options = {
             "headless": True,
