@@ -1,3 +1,4 @@
+import os
 from time import time
 from html import escape
 from pathlib import Path
@@ -20,6 +21,8 @@ from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import GofileResult
 from FZBypass.core.provider_scrapers import ProviderFileResult
 from FZBypass.core.bot_utils import AuthChatsTopics, convert_time, BypassFilter
+
+BYPASS_TASK_TIMEOUT_SECONDS = max(70, int(os.getenv("BYPASS_TASK_TIMEOUT_SECONDS", "150")))
 
 
 @Bypass.on_message(command("start"))
@@ -73,7 +76,7 @@ async def bypass_check(client, message):
         if link:
             no += 1
             tlinks.append(link)
-            atasks.append(create_task(wait_for(direct_link_checker(link), timeout=60)))
+            atasks.append(create_task(wait_for(direct_link_checker(link), timeout=BYPASS_TASK_TIMEOUT_SECONDS)))
             link = ""
 
     ad_domains = (
@@ -89,7 +92,7 @@ async def bypass_check(client, message):
             pass
     try:
         completed_tasks = await wait_for(
-            gather(*atasks, return_exceptions=True), timeout=70
+            gather(*atasks, return_exceptions=True), timeout=BYPASS_TASK_TIMEOUT_SECONDS + 10
         )
     except Exception as error:
         completed_tasks = [error for _ in tlinks]
