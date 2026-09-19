@@ -27,6 +27,8 @@ MAX_WAIT_MS = int(os.getenv("SOLVE_MAX_WAIT_MS", "90000"))
 TURNSTILE_SELECTORS = (
     "input[name='cf-verified-token']",
     "input[name='cf_turnstile_token']",
+    "input[name='cf-turnstile-response']",
+    "textarea[name='cf-turnstile-response']",
     "input[name='token'][data-sitekey]",
     "input[type='hidden'][value*='token']",
 )
@@ -265,11 +267,27 @@ async def solve_turnstile(
                 token = await _detect_turnstile_token(page)
                 if token:
                     result.token = token
+                    # Jobsheel uses the Turnstile callback to submit its form.
+                    # In headless runs the callback can fire without completing
+                    # navigation, so submit the same form explicitly and wait
+                    # for the server-generated destination page.
+                    try:
+                        form = page.locator("form").first
+                        if await form.count():
+                            await form.evaluate("form => form.requestSubmit ? form.requestSubmit() : form.submit()")
+                            await page.wait_for_timeout(3000)
+                    except Exception as exc:
+                        LOGGER.debug("Turnstile form submission fallback: %s", exc)
 
                 cookies = await context.cookies()
                 result.cookies = cookies
                 result.clearance_cookie = await _extract_clearance_cookie(context)
+                result.final_url = page.url
                 challenge_present = await _has_challenge(page)
+                try:
+                    result.html = await page.content()
+                except Exception:
+                    pass
 
                 if not challenge_present or token or result.clearance_cookie:
                     result.success = True
