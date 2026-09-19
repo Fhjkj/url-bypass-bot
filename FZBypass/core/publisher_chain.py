@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from FZBypass.core.exceptions import DDLException
 from FZBypass.core.destination_cache import get_cached, save_verified
 from FZBypass.core.proxy_pool import configured_proxies
+from FZBypass.core.turnstile_solver import solve_turnstile, SolveResult
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
 CHALLENGE_MARKERS = (
@@ -207,7 +208,9 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
     """Follow ordinary redirects/forms using direct access and an authorized proxy.
 
     Set BYPASS_PROXY_URL only to a proxy you own or are authorized to use.
-    This intentionally stops on Cloudflare/CAPTCHA pages and does not forge tokens.
+    When a Cloudflare/ Turnstile challenge is encountered, the persistent
+    Chromium profile is used to solve it and the resulting clearance cookies
+    are replayed so the chain can continue to the final destination.
     """
     if cached := get_cached(url):
         return cached
@@ -238,7 +241,20 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                             continue
                         body = await response.text(errors="ignore")
                         if _challenge(body, response.headers.get("title", "")):
-                            raise DDLException("Cloudflare/CAPTCHA challenge detected; authorized browser/API required")
+                            # Solve the Turnstile challenge with the persistent
+                            # Chromium profile, then replay cookies to continue.
+                            result = await solve_turnstile(current)
+                            if not result.success or not result.clearance_cookie:
+                                raise DDLException(
+                                    f"Cloudflare/CAPTCHA challenge detected at {current} "
+                                    f"and could not be solved: {result.error}"
+                                )
+                            cookies = {c["name"]: c["value"] for c in (result.cookies or []) if c.get("name")}
+                            session.headers.update({"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())})
+                            if result.final_url and result.final_url not in seen:
+                                current = result.final_url
+                                continue
+                            continue
                         embedded = _embedded_telegram(body, url)
                         if embedded:
                             save_verified(url, embedded, "embedded-telegram")

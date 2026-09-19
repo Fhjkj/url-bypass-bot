@@ -3,6 +3,7 @@ import os
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 from FZBypass.core.exceptions import DDLException
+from FZBypass.core.turnstile_solver import solve_turnstile
 
 INTERMEDIARY_HOST_MARKERS = (
     "hittracks.in.net",
@@ -18,11 +19,16 @@ CHALLENGE_MARKERS = (
     "captcha",
     "recaptcha",
     "enable javascript and cookies",
+    "just a moment",
 )
 
 
 async def extract_headless_destination(url: str, timeout_ms: int = 30000) -> str:
-    """Resolve ordinary browser redirects without bypassing anti-bot challenges."""
+    """Resolve ordinary browser redirects, solving Cloudflare challenges when present.
+
+    When a Turnstile/Cloudflare challenge is detected, the persistent Chromium
+    profile is used to clear it and the resulting final URL is returned.
+    """
     executable = os.getenv("CHROMIUM_PATH", "/usr/bin/chromium")
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(
@@ -43,6 +49,11 @@ async def extract_headless_destination(url: str, timeout_ms: int = 30000) -> str
             current = page.url
             combined = f"{title}\n{body}"[:20000]
             if any(marker in combined for marker in CHALLENGE_MARKERS):
+                # Solve the challenge using the persistent profile, then return
+                # the final URL the challenge cleared to.
+                result = await solve_turnstile(current)
+                if result.success and result.final_url:
+                    return result.final_url
                 raise DDLException(
                     "Cloudflare/CAPTCHA challenge detected; manual verification or an authorized API is required"
                 )

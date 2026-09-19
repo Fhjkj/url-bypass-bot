@@ -405,6 +405,8 @@ async def direct_link_checker(link, onlylink=False):
         blink = await resolve_publisher_chain(link)
     elif bool(match(r"https?:\/\/(?:www\.)?softurl\.in\/\S+", link)):
         blink = await resolve_publisher_chain(link)
+    elif bool(match(r"https?:\/\/(?:www\.)?babylinks\.in\/\S+", link)):
+        blink = await resolve_publisher_chain(link)
     elif bool(match(r"https?:\/\/(?:www\.)?(?:dotflix\.store|dtflix\.ink)\/share\/\S+", link)):
         blink = await dotflix(link)
     elif bool(match(r"https?:\/\/(?:www\.)?gofile\.io\/d\/\S+", link)):
@@ -422,8 +424,6 @@ async def direct_link_checker(link, onlylink=False):
     elif bool(match(r"https?:\/\/(?:www\.)?gplinks\.co\/\S+", link)):
         blink = await extract_final_destination(link)
     elif bool(match(r"https?:\/\/(?:www\.)?vplink\.in\/\S+", link)):
-        blink = await extract_final_destination(link)
-    elif bool(match(r"https?:\/\/(?:www\.)?babylinks\.in\/\S+", link)):
         blink = await extract_final_destination(link)
 
     # DL Sites
