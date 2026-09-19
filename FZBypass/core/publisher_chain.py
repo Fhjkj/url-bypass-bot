@@ -328,7 +328,8 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
         if browser_result:
             save_verified(url, browser_result, "softurl-playwright")
             return browser_result
-    raise DDLException(errors[-1] if errors else "Publisher chain did not reach a final destination")
+    message = next((item for item in reversed(errors) if item and item.strip()), None)
+    raise DDLException(message or "Publisher chain did not reach a final destination; no usable error was returned")
 
 
 async def _playwright_softurl_explicit(page, source: str) -> str | None:

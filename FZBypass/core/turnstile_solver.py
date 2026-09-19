@@ -100,7 +100,7 @@ def _ensure_playwright_browser() -> Optional[str]:
                 subprocess.run(
                     [sys.executable, "-m", "playwright", "install", "chromium"],
                     check=True,
-                    timeout=240,
+                    timeout=int(os.getenv("PLAYWRIGHT_INSTALL_TIMEOUT_SECONDS", "120")),
                     env=env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
