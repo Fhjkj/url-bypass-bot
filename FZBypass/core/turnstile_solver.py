@@ -85,6 +85,8 @@ def _resolve_browser_executable() -> Optional[str]:
         os.getenv("PLAYWRIGHT_RUNTIME_BROWSERS_PATH"),
         "/tmp/playwright-browsers",
         "/ms-playwright",
+        "/opt/render/.cache/ms-playwright",
+        "/opt/render/project/src/.cache/ms-playwright",
     ):
         if value and value != "0":
             roots.append(Path(value))
@@ -210,6 +212,13 @@ async def solve_turnstile(
     result = SolveResult(success=False, url=url, final_url="", elapsed_ms=0)
     profile_dir = _ensure_profile_dir()
     executable = _ensure_playwright_browser()
+    if not executable:
+        result.error = (
+            "Chromium executable unavailable after checking CHROMIUM_PATH, system PATH, "
+            "and all configured Playwright browser directories"
+        )
+        result.elapsed_ms = int((time.time() - start) * 1000)
+        return result
 
     try:
         async with async_playwright() as playwright:

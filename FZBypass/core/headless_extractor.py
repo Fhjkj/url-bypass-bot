@@ -33,6 +33,11 @@ async def extract_headless_destination(url: str, timeout_ms: int = 30000) -> str
     profile is used to clear it and the resulting final URL is returned.
     """
     executable = _ensure_playwright_browser()
+    if not executable:
+        raise DDLException(
+            "Chromium executable unavailable; deployment must install /usr/bin/chromium "
+            "or a Playwright browser"
+        )
     async with async_playwright() as playwright:
         launch_options = {
             "headless": True,
