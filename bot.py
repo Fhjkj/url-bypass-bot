@@ -14,6 +14,8 @@ from FZBypass.core.turnstile_solver import solve_sync, SolveResult
 
 app = Flask(__name__)
 LOGGER = getLogger(__name__)
+telegram_ready = False
+flood_wait_until = 0.0
 
 
 @app.get("/")
@@ -23,7 +25,13 @@ def home():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "fz-bypass-bot"}, 200
+    remaining = max(0, int(flood_wait_until - time.time())) if flood_wait_until else 0
+    return {
+        "ok": True,
+        "service": "fz-bypass-bot",
+        "telegram_ready": telegram_ready,
+        "telegram_flood_wait_seconds": remaining,
+    }, 200
 
 
 @app.post("/solve")
@@ -64,14 +72,24 @@ if __name__ == "__main__":
     while True:
         try:
             Bypass.start()
+            telegram_ready = True
+            flood_wait_until = 0.0
+            LOGGER.info("Telegram client started successfully")
             break
         except FloodWait as exc:
             wait_seconds = max(int(getattr(exc, "value", 60)), 60)
+            telegram_ready = False
+            flood_wait_until = time.time() + wait_seconds
             LOGGER.error(
-                "Telegram FloodWait during startup; keeping health server alive and "
-                "retrying in %s seconds.",
+                "Telegram FloodWait during startup; bot actions are paused for %s seconds. "
+                "Keeping health server alive and retrying after cooldown.",
                 wait_seconds,
             )
+            try:
+                if getattr(Bypass, "is_connected", False):
+                    Bypass.stop()
+            except Exception as stop_error:
+                LOGGER.warning("Could not reset Telegram client after FloodWait: %s", stop_error)
             time.sleep(wait_seconds)
     try:
         idle()
