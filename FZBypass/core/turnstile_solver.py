@@ -123,9 +123,15 @@ def _ensure_playwright_browser() -> Optional[str]:
         browser_path.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env["PLAYWRIGHT_BROWSERS_PATH"] = str(browser_path)
+        # A previous boot may have left a marker after a partial download.
+        # Make this path visible to the resolver before trusting that marker.
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browser_path)
         marker = browser_path / ".chromium-installed"
         try:
-            if not marker.exists():
+            installed_executable = _resolve_browser_executable()
+            if not installed_executable:
+                marker.unlink(missing_ok=True)
+                env.pop("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", None)
                 subprocess.run(
                     [sys.executable, "-m", "playwright", "install", "chromium"],
                     check=True,
@@ -136,11 +142,13 @@ def _ensure_playwright_browser() -> Optional[str]:
                     text=True,
                 )
                 marker.touch()
-            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browser_path)
         except Exception as exc:
             LOGGER.error("Unable to install runtime Chromium: %s", exc)
             return None
-    return _resolve_browser_executable()
+    executable = _resolve_browser_executable()
+    if not executable:
+        LOGGER.error("Playwright install completed without a discoverable Chromium executable")
+    return executable
 
 
 async def _detect_turnstile_token(page) -> Optional[str]:
