@@ -16,6 +16,8 @@ CHALLENGE_MARKERS = (
     "cloudflare",
     "verify you are human",
     "checking your browser",
+    "please verify to continue",
+    "turnstile",
     "captcha",
     "recaptcha",
     "enable javascript and cookies",

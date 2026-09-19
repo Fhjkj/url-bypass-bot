@@ -21,6 +21,8 @@ CHALLENGE_MARKERS = (
     "verify you are human",
     "enable javascript and cookies",
     "checking your browser",
+    "please verify to continue",
+    "turnstile",
     "iuam",
 )
 INTERMEDIARY_MARKERS = ("hittracks.in.net", "insurance.", "study.", "skrresults.com", "google.com/httpservice", "softurl.in", "aadilahmadshah.in", "surajitlinks.in", "surajitmodz.", "jobsheel.com")
