@@ -67,6 +67,7 @@ def _ensure_profile_dir() -> Path:
 
 _browser_install_lock = threading.Lock()
 _browser_install_attempted = False
+_browser_install_error = ""
 
 
 def _resolve_browser_executable() -> Optional[str]:
@@ -108,7 +109,7 @@ def _resolve_browser_executable() -> Optional[str]:
 
 def _ensure_playwright_browser() -> Optional[str]:
     """Ensure a writable Chromium install exists for native Render runtimes."""
-    global _browser_install_attempted
+    global _browser_install_attempted, _browser_install_error
     executable = _resolve_browser_executable()
     if executable:
         return executable
@@ -132,15 +133,30 @@ def _ensure_playwright_browser() -> Optional[str]:
             if not installed_executable:
                 marker.unlink(missing_ok=True)
                 env.pop("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", None)
-                subprocess.run(
-                    [sys.executable, "-m", "playwright", "install", "chromium"],
-                    check=True,
-                    timeout=int(os.getenv("PLAYWRIGHT_INSTALL_TIMEOUT_SECONDS", "120")),
-                    env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
+                install_timeout = int(os.getenv("PLAYWRIGHT_INSTALL_TIMEOUT_SECONDS", "180"))
+                install_logs = []
+                for browser_name in ("chromium", "chromium-headless-shell"):
+                    try:
+                        completed = subprocess.run(
+                            [sys.executable, "-m", "playwright", "install", browser_name],
+                            check=True,
+                            timeout=install_timeout,
+                            env=env,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                        )
+                        install_logs.append(f"{browser_name}: {completed.stdout[-1200:]}")
+                    except Exception as exc:
+                        output = getattr(exc, "stdout", "") or ""
+                        install_logs.append(f"{browser_name}: {exc}; {output[-1200:]}")
+                    installed_executable = _resolve_browser_executable()
+                    if installed_executable:
+                        break
+                if not installed_executable:
+                    _browser_install_error = " | ".join(install_logs)[-3000:]
+                    LOGGER.error("Unable to install runtime Chromium: %s", _browser_install_error)
+                    return None
                 marker.touch()
         except Exception as exc:
             LOGGER.error("Unable to install runtime Chromium: %s", exc)
@@ -226,6 +242,7 @@ async def solve_turnstile(
         result.error = (
             "Chromium executable unavailable after checking CHROMIUM_PATH, system PATH, "
             "and all configured Playwright browser directories"
+            + (f". Installer detail: {_browser_install_error}" if _browser_install_error else "")
         )
         result.elapsed_ms = int((time.time() - start) * 1000)
         return result
