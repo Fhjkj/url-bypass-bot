@@ -246,16 +246,22 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
                             # Solve the Turnstile challenge with the persistent
                             # Chromium profile, then replay cookies to continue.
                             result = await solve_turnstile(current)
-                            if not result.success or not result.clearance_cookie:
+                            if not result.success:
                                 raise DDLException(
                                     f"Cloudflare/CAPTCHA challenge detected at {current} "
-                                    f"and could not be solved: {result.error}"
+                                    f"and could not be solved: {result.error or 'browser challenge remained active'}"
                                 )
                             cookies = {c["name"]: c["value"] for c in (result.cookies or []) if c.get("name")}
-                            session.headers.update({"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())})
+                            if cookies:
+                                session.headers.update({"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())})
                             if result.final_url and result.final_url not in seen:
                                 current = result.final_url
                                 continue
+                            if not cookies and not result.clearance_cookie:
+                                raise DDLException(
+                                    f"Cloudflare/CAPTCHA challenge at {current} cleared in the browser "
+                                    "but returned no reusable cookies or redirect"
+                                )
                             continue
                         embedded = _embedded_telegram(body, url)
                         if embedded:
