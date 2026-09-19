@@ -23,7 +23,7 @@ CHALLENGE_MARKERS = (
     "checking your browser",
     "iuam",
 )
-INTERMEDIARY_MARKERS = ("hittracks.in.net", "insurance.", "study.", "skrresults.com", "google.com/httpservice", "softurl.in", "aadilahmadshah.in", "surajitlinks.in", "surajitmodz.")
+INTERMEDIARY_MARKERS = ("hittracks.in.net", "insurance.", "study.", "skrresults.com", "google.com/httpservice", "softurl.in", "aadilahmadshah.in", "surajitlinks.in", "surajitmodz.", "jobsheel.com")
 SOFTURL_HOST_MARKERS = ("softurl.in", "aadilahmadshah.in")
 
 

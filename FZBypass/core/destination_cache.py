@@ -16,6 +16,7 @@ INVALID_HOST_MARKERS = (
     "softurl.in",
     "aadilahmadshah.in",
     "google.com/httpservice",
+    "jobsheel.com",
 )
 
 
