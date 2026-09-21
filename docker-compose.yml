@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  proxy:
+    build: .
+    container_name: video-proxy
+    ports:
+      - "10000:10000"
+    environment:
+      - SOLVER_API=https://turnstile-solver-production-7e59.up.railway.app
+    restart: unless-stopped
