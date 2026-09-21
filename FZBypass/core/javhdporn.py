@@ -37,34 +37,18 @@ async def javhdporn(url: str) -> str:
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0")
 
-    # Step 2: Use Playwright to load page and trigger video decryption
+# Step 2: Use Playwright to load page and trigger video decryption
     async with async_playwright() as p:
-        try:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage'
-                ]
-            )
-        except Exception:
-            # Fallback: try to install browsers at runtime
-            import subprocess
-            import sys
-            subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium", "chromium-headless-shell"],
-                env={**os.environ, "PLAYWRIGHT_BROWSERS_PATH": os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/opt/render/project/src/.cache/ms-playwright")},
-                check=False,
-            )
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage'
-                ]
-            )
+        # Use turnstile_solver's robust browser resolution
+        from FZBypass.core.turnstile_solver import _ensure_playwright_browser
+        executable = _ensure_playwright_browser()
+        launch_opts = {
+            "headless": True,
+            "args": ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--headless=new'],
+        }
+        if executable:
+            launch_opts["executable_path"] = executable
+        browser = await p.chromium.launch(**launch_opts)
         context = await browser.new_context(
             ignore_https_errors=True,
             user_agent=user_agent

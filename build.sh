@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# exit on error
 set -o errexit
 
-# Upgrade pip and install standard packages
+# Clean out any old/broken extraction caches
+rm -rf /opt/render/project/src/.cache/ms-playwright/*
+
+# Upgrade dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Force Playwright to download Chromium to a persistent location
+# Force download of the full unified Chromium stack
 export PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/src/.cache/ms-playwright
-playwright install chromium chromium-headless-shell --with-deps
+playwright install chromium --with-deps
+playwright install chromium-headless-shell --with-deps

@@ -257,9 +257,11 @@ async def solve_turnstile(
             launch_options = {
                 "user_data_dir": str(profile_dir),
                 "headless": headless,
+                "channel": "chromium",
                 "args": [
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
+                    "--headless=new",
                     "--disable-blink-features=AutomationControlled",
                 ],
                 "viewport": {"width": 1280, "height": 720},
