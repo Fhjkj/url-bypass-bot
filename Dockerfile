@@ -10,40 +10,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Install python dependencies first
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --r requirements.txt
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        chromium \
-        libnss3 \
-        libnspr4 \
-        libatk1.0-0 \
-        libatk-bridge2.0-0 \
-        libcups2 \
-        libdrm2 \
-        libxkbcommon0 \
-        libxcomposite1 \
-        libxdamage1 \
-        libxfixes3 \
-        libxrandr2 \
-        libgbm1 \
-        libpango-1.0-0 \
-        libcairo2 \
-        libasound2 \
-        libxshmfence1 \
-        libx11-6 \
-        libxcb1 \
-        libxext6 \
-        libgl1 \
-    && rm -rf /var/lib/apt/lists/* \
-    && test -x /usr/bin/chromium \
-    && chromium --version
-
-RUN mkdir -p /opt/render/.cache/ms-playwright \
-    && playwright install chromium --with-deps \
-    && ls -la /opt/render/.cache/ms-playwright/ \
-    && test -f /opt/render/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell
+# Force Playwright to download Chromium and its OS dependencies
+RUN playwright install --with-deps chromium
 
 COPY . .
 
