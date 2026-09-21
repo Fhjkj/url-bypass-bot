@@ -12,6 +12,7 @@ from FZBypass.core.dotflix import dotflix
 from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import gofile, GofileResult
 from FZBypass.core.provider_scrapers import filebee, gdflix, hubcloud, tmbcloud, toonworld_redirect, ProviderFileResult
+from FZBypass.core.javhdporn import javhdporn
 
 fmed_list = [
     "fembed.net",
@@ -462,6 +463,8 @@ async def direct_link_checker(link, onlylink=False):
     # Exceptions
     elif bool(match(r"https?:\/\/.+\.technicalatg\.\S+", link)):
         raise DDLException("Bypass Not Allowed !")
+    elif bool(match(r"https?:\/\/(?:www\.)?javhdporn\.\S+", link)):
+        return await javhdporn(link)
     else:
         raise DDLException(
             f"<i>No Bypass Function Found for your Link :</i> <code>{link}</code>"

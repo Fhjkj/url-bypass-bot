@@ -107,9 +107,9 @@ async def _extract_video_url(url):
         result = response.json()
 
     cookies = result.get("cookies", [])
-    user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0")
 
-    # Step 2: Use Playwright to load page and click play
+    # Step 2: Use Playwright to load page and trigger video decryption
     async with async_playwright() as p:
         chromium_path = os.environ.get("CHROMIUM_PATH")
         launch_options = {"headless": True}
@@ -152,14 +152,17 @@ async def _extract_video_url(url):
         except:
             pass
 
-        await page.wait_for_timeout(5000)
+        # Wait for video to load and stream segments
+        await page.wait_for_timeout(10000)
         await browser.close()
 
-        # Filter for actual video URLs
-        video_urls = [u for u in video_urls if 'banner' not in u.lower() and 'storagexhd' not in u.lower()]
+        # Filter out ads and banners
+        video_urls = [u for u in video_urls if 'banner' not in u.lower() and 'storagexhd' not in u.lower() and 'ping.m3u8' not in u.lower()]
 
         # Prefer HLS master playlists
         hls_urls = [u for u in video_urls if '.m3u8' in u and 'master' in u.lower()]
+        if not hls_urls:
+            hls_urls = [u for u in video_urls if '.m3u8' in u and '_auto' in u.lower()]
         if not hls_urls:
             hls_urls = [u for u in video_urls if '.m3u8' in u]
 
