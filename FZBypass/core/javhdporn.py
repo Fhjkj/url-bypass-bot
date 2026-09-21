@@ -39,14 +39,32 @@ async def javhdporn(url: str) -> str:
 
     # Step 2: Use Playwright to load page and trigger video decryption
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage'
-            ]
-        )
+        try:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage'
+                ]
+            )
+        except Exception:
+            # Fallback: try to install browsers at runtime
+            import subprocess
+            import sys
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium", "chromium-headless-shell"],
+                env={**os.environ, "PLAYWRIGHT_BROWSERS_PATH": os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/opt/render/project/src/.cache/ms-playwright")},
+                check=False,
+            )
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage'
+                ]
+            )
         context = await browser.new_context(
             ignore_https_errors=True,
             user_agent=user_agent
