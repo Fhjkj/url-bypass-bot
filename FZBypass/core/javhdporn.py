@@ -20,6 +20,7 @@ async def javhdporn(url: str) -> str:
     5. Return the HLS master playlist URL
     """
     from playwright.async_api import async_playwright
+    import shutil
 
     SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7e59.up.railway.app")
 
@@ -37,11 +38,15 @@ async def javhdporn(url: str) -> str:
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0")
 
-    # Step 2: Use Playwright to load page and trigger video decryption
+    # Step 2: Resolve browser executable (same logic as turnstile_solver)
+    chromium_path = os.environ.get("CHROMIUM_PATH")
+    if not chromium_path or not os.path.isfile(chromium_path):
+        chromium_path = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
+
+    # Step 3: Use Playwright to load page and trigger video decryption
     async with async_playwright() as p:
-        chromium_path = os.environ.get("CHROMIUM_PATH")
         launch_options = {"headless": True}
-        if chromium_path and os.path.isfile(chromium_path):
+        if chromium_path:
             launch_options["executable_path"] = chromium_path
         browser = await p.chromium.launch(**launch_options)
         context = await browser.new_context(
