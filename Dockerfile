@@ -52,4 +52,4 @@ RUN ls -la /opt/render/.cache/ms-playwright/chromium-*/chrome-linux64/ 2>&1 || t
 COPY . .
 
 EXPOSE 10000
-CMD ["python", "proxy_service.py"]
+CMD ["python", "bot.py"]
