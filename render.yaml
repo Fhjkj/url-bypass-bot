@@ -2,8 +2,6 @@ services:
   - type: web
     name: fz-bypass-bot
     runtime: docker
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
     plan: starter
     disk:
       name: fz-chromium-profile

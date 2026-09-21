@@ -195,6 +195,7 @@ if __name__ == "__main__":
                 wait_seconds,
             )
             try:
+<<<<<<< ours
                 if getattr(Bypass, "is_connected", False):
                     Bypass.stop()
             except Exception as stop_error:
@@ -204,3 +205,15 @@ if __name__ == "__main__":
         idle()
     finally:
         Bypass.stop()
+=======
+                idle()
+            finally:
+                Bypass.stop()
+        except Exception as exc:
+            LOGGER.warning("Telegram not available, Flask endpoints still work: %s", exc)
+            # Keep Flask running
+            flask_thread.join()
+    else:
+        LOGGER.info("Telegram not available, keeping Flask server running")
+        flask_thread.join()
+>>>>>>> theirs
