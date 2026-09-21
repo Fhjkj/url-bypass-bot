@@ -41,7 +41,13 @@ async def javhdporn(url: str) -> str:
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            channel="chromium",
+            args=[
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--headless=new'
+            ]
         )
         context = await browser.new_context(
             ignore_https_errors=True,
@@ -53,9 +59,11 @@ async def javhdporn(url: str) -> str:
             await context.add_cookies([cookie])
 
         video_urls = []
+        all_requests = []
 
         async def handle_request(request):
             req_url = request.url
+            all_requests.append(req_url)
             if any(ext in req_url.lower() for ext in ['.m3u8', '.mp4']):
                 if req_url not in video_urls:
                     video_urls.append(req_url)
@@ -63,7 +71,26 @@ async def javhdporn(url: str) -> str:
         page.on("request", handle_request)
 
         await page.goto(url, wait_until="networkidle", timeout=30000)
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(5000)
+
+        # Try to extract video URL from page JS state
+        video_src = await page.evaluate("""() => {
+            const video = document.querySelector('video');
+            if (video) {
+                return video.src || video.currentSrc;
+            }
+            const wpst = document.querySelector('#wpst-video');
+            if (wpst) {
+                return wpst.src || wpst.currentSrc;
+            }
+            const mpuEl = document.querySelector('[data-mpu]');
+            if (mpuEl) {
+                return mpuEl.getAttribute('data-mpu');
+            }
+            return null;
+        }""")
+        if video_src:
+            print(f"Video src from page: {video_src}")
 
         # Click play button to trigger decryption
         try:
@@ -92,7 +119,6 @@ async def javhdporn(url: str) -> str:
                     wpst.play();
                     wpst.muted = true;
                 }
-                // Try to trigger videojs player
                 if (typeof videojs !== 'undefined') {
                     const players = videojs.getPlayers();
                     for (const key in players) {
@@ -105,7 +131,7 @@ async def javhdporn(url: str) -> str:
             pass
 
         # Wait for video to load and stream segments
-        await page.wait_for_timeout(15000)
+        await page.wait_for_timeout(20000)
         await browser.close()
 
     # Filter out ads and banners
