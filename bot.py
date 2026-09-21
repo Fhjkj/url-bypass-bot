@@ -177,30 +177,45 @@ async def _extract_video_url(url):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
-    Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False), daemon=True).start()
-    while True:
-        try:
-            Bypass.start()
-            telegram_ready = True
-            flood_wait_until = 0.0
-            LOGGER.info("Telegram client started successfully")
-            break
-        except FloodWait as exc:
-            wait_seconds = max(int(getattr(exc, "value", 60)), 60)
-            telegram_ready = False
-            flood_wait_until = time.time() + wait_seconds
-            LOGGER.error(
-                "Telegram FloodWait during startup; bot actions are paused for %s seconds. "
-                "Keeping health server alive and retrying after cooldown.",
-                wait_seconds,
-            )
-            try:
-                if getattr(Bypass, "is_connected", False):
-                    Bypass.stop()
-            except Exception as stop_error:
-                LOGGER.warning("Could not reset Telegram client after FloodWait: %s", stop_error)
-            time.sleep(wait_seconds)
+    
+    # Start Flask server in background
+    flask_thread = Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False), daemon=True)
+    flask_thread.start()
+    LOGGER.info(f"Flask server started on port {port}")
+    
+    # Try to start Telegram client (optional)
     try:
-        idle()
-    finally:
-        Bypass.stop()
+        from pyrogram import idle
+        while True:
+            try:
+                Bypass.start()
+                telegram_ready = True
+                flood_wait_until = 0.0
+                LOGGER.info("Telegram client started successfully")
+                break
+            except FloodWait as exc:
+                wait_seconds = max(int(getattr(exc, "value", 60)), 60)
+                telegram_ready = False
+                flood_wait_until = time.time() + wait_seconds
+                LOGGER.error(
+                    "Telegram FloodWait during startup; bot actions are paused for %s seconds.",
+                    wait_seconds,
+                )
+                try:
+                    if getattr(Bypass, "is_connected", False):
+                        Bypass.stop()
+                except Exception as stop_error:
+                    LOGGER.warning("Could not reset Telegram client: %s", stop_error)
+                time.sleep(wait_seconds)
+            except Exception as exc:
+                LOGGER.error("Telegram client failed to start: %s", exc)
+                telegram_ready = False
+                break
+        try:
+            idle()
+        finally:
+            Bypass.stop()
+    except Exception as exc:
+        LOGGER.warning("Telegram not available, Flask endpoints still work: %s", exc)
+        # Keep Flask running
+        flask_thread.join()

@@ -1,12 +1,9 @@
 """
-Docker Proxy Service for extracting video URLs from encrypted sites.
-
-Uses Playwright + Turnstile Solver to bypass Cloudflare, then clicks
-the play button to trigger video decryption and intercepts the URL.
+Standalone proxy service for extracting video URLs from encrypted sites.
 
 Usage:
-    docker-compose up -d
-    curl http://localhost:10000/extract?url=https://www.javhdporn.net/video/apak-095-decensored/
+    python proxy_service.py
+    curl "http://localhost:10000/extract?url=https://www.javhdporn.net/video/apak-095-decensored/"
 """
 
 import asyncio
@@ -39,7 +36,7 @@ async def extract_video_url(url):
     # Step 1: Solve CF challenge
     result = await solve_cf_challenge(url)
     if not result:
-        return {"error": "Failed to solve CF challenge"}
+        return {"success": False, "error": "Failed to solve CF challenge"}
     
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
@@ -53,7 +50,6 @@ async def extract_video_url(url):
         )
         page = await context.new_page()
         
-        # Add cookies from solver
         for cookie in cookies:
             await context.add_cookies([cookie])
         
@@ -67,7 +63,6 @@ async def extract_video_url(url):
         
         page.on("request", handle_request)
         
-        # Navigate to page
         await page.goto(url, wait_until="networkidle", timeout=30000)
         await page.wait_for_timeout(3000)
         
@@ -78,23 +73,19 @@ async def extract_video_url(url):
         except:
             pass
         
-        # Also try clicking video player area
         try:
             await page.click("#video-player", position={"x": 400, "y": 300}, timeout=5000)
             await page.wait_for_timeout(2000)
         except:
             pass
         
-        # Wait for video to load
         await page.wait_for_timeout(5000)
-        
         await browser.close()
         
-        # Filter for actual video URLs (HLS playlists or direct MP4s)
-        # Exclude ad banners
+        # Filter for actual video URLs
         video_urls = [u for u in video_urls if 'banner' not in u.lower() and 'storagexhd' not in u.lower()]
         
-        # Prefer HLS m3u8 URLs (these are the actual video streams)
+        # Prefer HLS master playlists
         hls_urls = [u for u in video_urls if '.m3u8' in u and 'master' in u.lower()]
         if not hls_urls:
             hls_urls = [u for u in video_urls if '.m3u8' in u]
@@ -112,7 +103,7 @@ async def extract_video_url(url):
                 "all_urls": video_urls[:10]
             }
         else:
-            return {"error": "No video URL found"}
+            return {"success": False, "error": "No video URL found"}
 
 
 @app.route('/extract', methods=['GET'])
@@ -120,19 +111,41 @@ def extract():
     """Extract video URL from a given URL."""
     url = request.args.get('url')
     if not url:
-        return jsonify({"error": "URL parameter required"}), 400
+        return jsonify({"success": False, "error": "URL parameter required"}), 400
     
     try:
         result = asyncio.run(extract_video_url(url))
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/bypass', methods=['GET'])
+def bypass():
+    """Bypass Cloudflare and extract video stream URL."""
+    url = request.args.get('url')
+    if not url:
+        return jsonify({"success": False, "error": "URL parameter required"}), 400
+    
+    try:
+        result = asyncio.run(extract_video_url(url))
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint."""
     return jsonify({"status": "ok"})
+
+
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({
+        "service": "video-proxy",
+        "endpoints": ["/extract", "/bypass", "/health"]
+    })
 
 
 if __name__ == '__main__':
