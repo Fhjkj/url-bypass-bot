@@ -91,6 +91,7 @@ def _resolve_browser_executable() -> Optional[str]:
     for value in (
         os.getenv("PLAYWRIGHT_BROWSERS_PATH"),
         os.getenv("PLAYWRIGHT_RUNTIME_BROWSERS_PATH"),
+        "/opt/render/project/src/ms-playwright",
         "/opt/render/project/src/.cache/ms-playwright",
         "/tmp/playwright-browsers",
         "/ms-playwright",
@@ -125,7 +126,7 @@ def _ensure_playwright_browser() -> Optional[str]:
         if _browser_install_attempted:
             return None
         _browser_install_attempted = True
-        browser_path = Path(os.getenv("PLAYWRIGHT_RUNTIME_BROWSERS_PATH", "/tmp/playwright-browsers"))
+        browser_path = Path(os.getenv("PLAYWRIGHT_RUNTIME_BROWSERS_PATH", os.getenv("PLAYWRIGHT_BROWSERS_PATH", "/opt/render/project/src/ms-playwright")))
         browser_path.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env["PLAYWRIGHT_BROWSERS_PATH"] = str(browser_path)
