@@ -27,6 +27,92 @@ fmed_list = [
 ]
 
 
+async def javhdporn(url):
+    """Extract video URL from javhdporn.net using Playwright + Turnstile Solver."""
+    import asyncio
+    import json
+    import os
+    from playwright.async_api import async_playwright
+    import httpx
+
+    SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7e59.up.railway.app")
+
+    async def solve_cf_challenge(target_url):
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{SOLVER_API}/solve-challenge",
+                json={"siteurl": target_url, "timeout": 60},
+                timeout=120
+            )
+            if response.status_code == 200:
+                return response.json()
+            return None
+
+    async def extract():
+        result = await solve_cf_challenge(url)
+        if not result:
+            return None
+
+        cookies = result.get("cookies", [])
+        user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                ignore_https_errors=True,
+                user_agent=user_agent
+            )
+            page = await context.new_page()
+
+            for cookie in cookies:
+                await context.add_cookies([cookie])
+
+            video_urls = []
+
+            async def handle_request(request):
+                req_url = request.url
+                if any(ext in req_url.lower() for ext in ['.m3u8', '.mp4']):
+                    if req_url not in video_urls:
+                        video_urls.append(req_url)
+
+            page.on("request", handle_request)
+
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(3000)
+
+            # Click play button to trigger decryption
+            try:
+                await page.click(".play-button", timeout=5000)
+                await page.wait_for_timeout(2000)
+            except:
+                pass
+
+            try:
+                await page.click("#video-player", position={"x": 400, "y": 300}, timeout=5000)
+                await page.wait_for_timeout(2000)
+            except:
+                pass
+
+            await page.wait_for_timeout(5000)
+            await browser.close()
+
+            # Filter for actual video URLs
+            video_urls = [u for u in video_urls if 'banner' not in u.lower() and 'storagexhd' not in u.lower()]
+
+            # Prefer HLS master playlists
+            hls_urls = [u for u in video_urls if '.m3u8' in u and 'master' in u.lower()]
+            if not hls_urls:
+                hls_urls = [u for u in video_urls if '.m3u8' in u]
+
+            if hls_urls:
+                return hls_urls[0]
+            elif video_urls:
+                return video_urls[0]
+            return None
+
+    return await extract()
+
+
 def is_share_link(url):
     return bool(
         match(
@@ -425,6 +511,10 @@ async def direct_link_checker(link, onlylink=False):
         blink = await extract_final_destination(link)
     elif bool(match(r"https?:\/\/(?:www\.)?vplink\.in\/\S+", link)):
         blink = await extract_final_destination(link)
+
+    # Javhdporn / encrypted video sites
+    elif bool(match(r"https?:\/\/(?:www\.)?javhdporn\.net\/video\/\S+", link)):
+        blink = await javhdporn(link)
 
     # DL Sites
     elif bool(match(r"https?:\/\/cinevood\.\S+", link)):
