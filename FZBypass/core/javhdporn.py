@@ -4,50 +4,41 @@ Uses Playwright + Turnstile Solver to bypass Cloudflare and extract
 the HLS video URL from the encrypted page.
 """
 import os
-import asyncio
 import httpx
 from FZBypass.core.exceptions import DDLException
 
 
 async def javhdporn(url: str) -> str:
-    """Extract video URL from javhdporn.net.
-
-    Steps:
-    1. Call Turnstile Solver API to get Cloudflare clearance cookies
-    2. Use Playwright to load the page with those cookies
-    3. Click play button to trigger video decryption
-    4. Intercept network requests for .m3u8 / .mp4 URLs
-    5. Return the HLS master playlist URL
-    """
+    """Extract video URL from javhdporn.net."""
     from playwright.async_api import async_playwright
 
     SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7e59.up.railway.app")
 
-    # Step 1: Solve CF challenge
+    # Step 1: Solve CF challenge with the correct payload structure
     async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{SOLVER_API}/solve-challenge",
-            json={"siteurl": url, "timeout": 60},
-            timeout=120
-        )
-        if response.status_code != 200:
-            raise DDLException("Failed to solve CF challenge")
-        result = response.json()
+        try:
+            response = await client.post(
+                f"{SOLVER_API}/solve-challenge",
+                json={
+                    "siteurl": url,
+                    "timeout": 60
+                },
+                timeout=120
+            )
+            if response.status_code != 200:
+                raise DDLException("Failed to solve CF challenge via Solver API")
+            result = response.json()
+        except Exception as e:
+            raise DDLException(f"Solver API connection error: {str(e)}")
 
     cookies = result.get("cookies", [])
-    user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0")
+    user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0")
 
-# Step 2: Use Playwright to load page and trigger video decryption
+    # Step 2: Launch Playwright Container Browser
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            channel="chromium",
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--headless=new'
-            ]
+            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
         )
         context = await browser.new_context(
             ignore_https_errors=True,
@@ -55,89 +46,63 @@ async def javhdporn(url: str) -> str:
         )
         page = await context.new_page()
 
-        for cookie in cookies:
-            await context.add_cookies([cookie])
+        if cookies:
+            await context.add_cookies(cookies)
 
         video_urls = []
-        all_requests = []
 
-        async def handle_request(request):
-            req_url = request.url
-            all_requests.append(req_url)
-            if any(ext in req_url.lower() for ext in ['.m3u8', '.mp4']):
-                if req_url not in video_urls:
-                    video_urls.append(req_url)
+        # Track network responses instead of requests to catch the active streams
+        async def handle_response(response):
+            res_url = response.url
+            if any(ext in res_url.lower() for ext in ['.m3u8', '.mp4']):
+                if res_url not in video_urls:
+                    video_urls.append(res_url)
 
-        page.on("request", handle_request)
+        page.on("response", handle_response)
 
-        await page.goto(url, wait_until="networkidle", timeout=30000)
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        except Exception as e:
+            await browser.close()
+            raise DDLException(f"Page loading timed out: {str(e)}")
+
         await page.wait_for_timeout(5000)
 
-        # Try to extract video URL from page JS state
-        video_src = await page.evaluate("""() => {
-            const video = document.querySelector('video');
-            if (video) {
-                return video.src || video.currentSrc;
-            }
-            const wpst = document.querySelector('#wpst-video');
-            if (wpst) {
-                return wpst.src || wpst.currentSrc;
-            }
-            const mpuEl = document.querySelector('[data-mpu]');
-            if (mpuEl) {
-                return mpuEl.getAttribute('data-mpu');
-            }
-            return null;
-        }""")
-        if video_src:
-            print(f"Video src from page: {video_src}")
+        # Traverse inside iframes to hit embedded video host players
+        frames = page.frames
+        for frame in frames:
+            try:
+                await frame.click("video", timeout=2000)
+            except:
+                pass
+            try:
+                await frame.evaluate("""() => {
+                    const v = document.querySelector('video');
+                    if(v) { v.play(); v.muted = true; }
+                }""")
+            except:
+                pass
 
-        # Click play button to trigger decryption
+        # Global playback click fallback
         try:
-            await page.click(".play-button", timeout=5000)
-            await page.wait_for_timeout(2000)
+            await page.click(".play-button", timeout=3000)
         except:
             pass
 
-        # Also try clicking video player area
-        try:
-            await page.click("#video-player", position={"x": 400, "y": 300}, timeout=5000)
-            await page.wait_for_timeout(2000)
-        except:
-            pass
-
-        # Trigger video play via JS
-        try:
-            await page.evaluate("""() => {
-                const video = document.querySelector('video');
-                if (video) {
-                    video.play();
-                    video.muted = true;
-                }
-                const wpst = document.querySelector('#wpst-video');
-                if (wpst) {
-                    wpst.play();
-                    wpst.muted = true;
-                }
-                if (typeof videojs !== 'undefined') {
-                    const players = videojs.getPlayers();
-                    for (const key in players) {
-                        if (players[key]) players[key].play();
-                    }
-                }
-            }""")
-            await page.wait_for_timeout(2000)
-        except:
-            pass
-
-        # Wait for video to load and stream segments
-        await page.wait_for_timeout(20000)
+        # Allow stream links to buffer and reveal themselves in responses
+        await page.wait_for_timeout(10000)
         await browser.close()
 
-    # Filter out ads and banners
-    video_urls = [u for u in video_urls if 'banner' not in u.lower() and 'storagexhd' not in u.lower() and 'ping.m3u8' not in u.lower()]
+    # Filter out advertising domains & tracking noise
+    video_urls = [
+        u for u in video_urls
+        if 'banner' not in u.lower()
+        and 'storagexhd' not in u.lower()
+        and 'ping.m3u8' not in u.lower()
+        and 'ads' not in u.lower()
+    ]
 
-    # Prefer HLS master playlists
+    # Prioritize master index manifests
     hls_urls = [u for u in video_urls if '.m3u8' in u and 'master' in u.lower()]
     if not hls_urls:
         hls_urls = [u for u in video_urls if '.m3u8' in u and '_auto' in u.lower()]
@@ -149,4 +114,4 @@ async def javhdporn(url: str) -> str:
     elif video_urls:
         return video_urls[0]
     else:
-        raise DDLException("No video URL found on the page")
+        raise DDLException("No playable streaming video source detected on the page context.")
