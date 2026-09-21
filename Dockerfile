@@ -24,4 +24,4 @@ RUN playwright install chromium
 COPY . .
 
 EXPOSE 10000
-CMD ["python", "proxy_service.py"]
+CMD ["python", "bot.py"]
