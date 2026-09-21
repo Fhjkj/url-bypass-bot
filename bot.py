@@ -254,6 +254,3 @@ if __name__ == "__main__":
     else:
         LOGGER.info("Telegram not available, keeping Flask server running")
         flask_thread.join()
-    else:
-        LOGGER.info("Telegram not available, keeping Flask server running")
-        flask_thread.join()
