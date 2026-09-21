@@ -5,13 +5,31 @@ from logging import getLogger
 from threading import Thread
 
 from flask import Flask, request, jsonify
-from pyrogram import idle
-from pyrogram.errors import FloodWait
 
 from dataclasses import asdict
 
-from FZBypass import Bypass
-from FZBypass.core.turnstile_solver import solve_sync, SolveResult
+try:
+    from FZBypass import Bypass
+    from FZBypass.core.turnstile_solver import solve_sync, SolveResult
+    from pyrogram.errors import FloodWait
+    from pyrogram import idle
+    TELEGRAM_AVAILABLE = True
+except SystemExit:
+    LOGGER = getLogger(__name__)
+    LOGGER.warning("Telegram client disabled - missing credentials")
+    Bypass = None
+    SolveResult = None
+    FloodWait = None
+    idle = None
+    TELEGRAM_AVAILABLE = False
+except Exception as exc:
+    LOGGER = getLogger(__name__)
+    LOGGER.warning("Telegram client not available: %s", exc)
+    Bypass = None
+    SolveResult = None
+    FloodWait = None
+    idle = None
+    TELEGRAM_AVAILABLE = False
 
 app = Flask(__name__)
 LOGGER = getLogger(__name__)
@@ -38,17 +56,9 @@ def health():
 @app.post("/solve")
 @app.post("/solve-challenge")
 def solve():
-    """Solve a Cloudflare Turnstile challenge for the given URL.
-
-    Request body (JSON):
-        url: str            - protected page URL (required)
-        timeout_ms: int     - navigation timeout in ms (optional, default 45000)
-        headless: bool      - run browser headless (optional, default true)
-
-    Response (JSON):
-        success, url, final_url, token, cookies, clearance_cookie,
-        error, elapsed_ms
-    """
+    """Solve a Cloudflare Turnstile challenge for the given URL."""
+    if not TELEGRAM_AVAILABLE or SolveResult is None:
+        return jsonify({"success": False, "error": "Telegram client not available"}), 503
     payload = request.get_json(silent=True) or {}
     url = payload.get("url") or request.form.get("url")
     if not url:
@@ -69,14 +79,7 @@ def solve():
 
 @app.get("/bypass")
 def bypass():
-    """Bypass Cloudflare and extract video stream URL.
-
-    Query params:
-        url: str - protected page URL (required)
-
-    Returns:
-        success, video_url, all_urls
-    """
+    """Bypass Cloudflare and extract video stream URL."""
     url = request.args.get("url")
     if not url:
         return jsonify({"success": False, "error": "Missing 'url' parameter"}), 400
@@ -109,9 +112,18 @@ async def _extract_video_url(url):
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
-    # Step 2: Use Playwright to load page and click play
+    # Step 2: Use Playwright to load page and trigger video decryption
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        # Use turnstile_solver's robust browser resolution
+        from FZBypass.core.turnstile_solver import _ensure_playwright_browser
+        executable = _ensure_playwright_browser()
+        launch_opts = {
+            "headless": True,
+            "args": ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--headless=new'],
+        }
+        if executable:
+            launch_opts["executable_path"] = executable
+        browser = await p.chromium.launch(**launch_opts)
         context = await browser.new_context(
             ignore_https_errors=True,
             user_agent=user_agent
@@ -177,35 +189,41 @@ async def _extract_video_url(url):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
-    Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False), daemon=True).start()
-    while True:
+
+    # Start Flask server in background
+    flask_thread = Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False), daemon=True)
+    flask_thread.start()
+    LOGGER.info(f"Flask server started on port {port}")
+
+    # Try to start Telegram client (optional - Flask endpoints still work without it)
+    if TELEGRAM_AVAILABLE:
         try:
-            Bypass.start()
-            telegram_ready = True
-            flood_wait_until = 0.0
-            LOGGER.info("Telegram client started successfully")
-            break
-        except FloodWait as exc:
-            wait_seconds = max(int(getattr(exc, "value", 60)), 60)
-            telegram_ready = False
-            flood_wait_until = time.time() + wait_seconds
-            LOGGER.error(
-                "Telegram FloodWait during startup; bot actions are paused for %s seconds. "
-                "Keeping health server alive and retrying after cooldown.",
-                wait_seconds,
-            )
+            while True:
+                try:
+                    Bypass.start()
+                    telegram_ready = True
+                    flood_wait_until = 0.0
+                    LOGGER.info("Telegram client started successfully")
+                    break
+                except FloodWait as exc:
+                    wait_seconds = max(int(getattr(exc, "value", 60)), 60)
+                    telegram_ready = False
+                    flood_wait_until = time.time() + wait_seconds
+                    LOGGER.error(
+                        "Telegram FloodWait during startup; bot actions are paused for %s seconds.",
+                        wait_seconds,
+                    )
+                    try:
+                        if getattr(Bypass, "is_connected", False):
+                            Bypass.stop()
+                    except Exception as stop_error:
+                        LOGGER.warning("Could not reset Telegram client: %s", stop_error)
+                    time.sleep(wait_seconds)
+                except Exception as exc:
+                    LOGGER.error("Telegram client failed to start: %s", exc)
+                    telegram_ready = False
+                    break
             try:
-<<<<<<< ours
-                if getattr(Bypass, "is_connected", False):
-                    Bypass.stop()
-            except Exception as stop_error:
-                LOGGER.warning("Could not reset Telegram client after FloodWait: %s", stop_error)
-            time.sleep(wait_seconds)
-    try:
-        idle()
-    finally:
-        Bypass.stop()
-=======
                 idle()
             finally:
                 Bypass.stop()
@@ -216,4 +234,3 @@ if __name__ == "__main__":
     else:
         LOGGER.info("Telegram not available, keeping Flask server running")
         flask_thread.join()
->>>>>>> theirs
