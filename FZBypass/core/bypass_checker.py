@@ -50,6 +50,13 @@ def is_excep_link(url):
 async def direct_link_checker(link, onlylink=False):
     domain = urlparse(link).hostname
 
+    # CRITICAL FIX: If the link is already a processed streaming media file,
+    # stop running regex checks and return it immediately! This prevents
+    # decrypted .m3u8/.mp4 streams from javhdporn.net (and other handlers)
+    # from falling through into drivescript / transcript and crashing.
+    if any(ext in link.lower() for ext in ['.m3u8', '.mp4', '.webm', '.mp3']):
+        return link
+
     # File Hoster Links
     if bool(match(r"https?:\/\/(yadi|disk.yandex)\.\S+", link)):
         return await yandex_disk(link)
@@ -478,7 +485,11 @@ async def direct_link_checker(link, onlylink=False):
     while True:
         try:
             links.append(blink)
-            blink = await direct_link_checker(blink, onlylink=True)
+            next_blink = await direct_link_checker(blink, onlylink=True)
+            # Stop if the checker returned the same URL unchanged (e.g. a media stream)
+            if next_blink == blink:
+                break
+            blink = next_blink
             if is_excep_link(links[-1]):
                 links.append("\n\n" + blink)
                 break
