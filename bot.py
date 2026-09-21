@@ -5,13 +5,31 @@ from logging import getLogger
 from threading import Thread
 
 from flask import Flask, request, jsonify
-from pyrogram import idle
-from pyrogram.errors import FloodWait
 
 from dataclasses import asdict
 
-from FZBypass import Bypass
-from FZBypass.core.turnstile_solver import solve_sync, SolveResult
+try:
+    from FZBypass import Bypass
+    from FZBypass.core.turnstile_solver import solve_sync, SolveResult
+    from pyrogram.errors import FloodWait
+    from pyrogram import idle
+    TELEGRAM_AVAILABLE = True
+except SystemExit:
+    LOGGER = getLogger(__name__)
+    LOGGER.warning("Telegram client disabled - missing credentials")
+    Bypass = None
+    SolveResult = None
+    FloodWait = None
+    idle = None
+    TELEGRAM_AVAILABLE = False
+except Exception as exc:
+    LOGGER = getLogger(__name__)
+    LOGGER.warning("Telegram client not available: %s", exc)
+    Bypass = None
+    SolveResult = None
+    FloodWait = None
+    idle = None
+    TELEGRAM_AVAILABLE = False
 
 app = Flask(__name__)
 LOGGER = getLogger(__name__)
@@ -49,6 +67,8 @@ def solve():
         success, url, final_url, token, cookies, clearance_cookie,
         error, elapsed_ms
     """
+    if not TELEGRAM_AVAILABLE or SolveResult is None:
+        return jsonify({"success": False, "error": "Telegram client not available"}), 503
     payload = request.get_json(silent=True) or {}
     url = payload.get("url") or request.form.get("url")
     if not url:
@@ -195,38 +215,45 @@ if __name__ == "__main__":
     flask_thread.start()
     LOGGER.info(f"Flask server started on port {port}")
 
-    # Try to start Telegram client (optional)
-    try:
-        while True:
-            try:
-                Bypass.start()
-                telegram_ready = True
-                flood_wait_until = 0.0
-                LOGGER.info("Telegram client started successfully")
-                break
-            except FloodWait as exc:
-                wait_seconds = max(int(getattr(exc, "value", 60)), 60)
-                telegram_ready = False
-                flood_wait_until = time.time() + wait_seconds
-                LOGGER.error(
-                    "Telegram FloodWait during startup; bot actions are paused for %s seconds.",
-                    wait_seconds,
-                )
-                try:
-                    if getattr(Bypass, "is_connected", False):
-                        Bypass.stop()
-                except Exception as stop_error:
-                    LOGGER.warning("Could not reset Telegram client: %s", stop_error)
-                time.sleep(wait_seconds)
-            except Exception as exc:
-                LOGGER.error("Telegram client failed to start: %s", exc)
-                telegram_ready = False
-                break
+    # Try to start Telegram client (optional - Flask endpoints still work without it)
+    if TELEGRAM_AVAILABLE:
         try:
-            idle()
-        finally:
-            Bypass.stop()
-    except Exception as exc:
-        LOGGER.warning("Telegram not available, Flask endpoints still work: %s", exc)
-        # Keep Flask running
+            while True:
+                try:
+                    Bypass.start()
+                    telegram_ready = True
+                    flood_wait_until = 0.0
+                    LOGGER.info("Telegram client started successfully")
+                    break
+                except FloodWait as exc:
+                    wait_seconds = max(int(getattr(exc, "value", 60)), 60)
+                    telegram_ready = False
+                    flood_wait_until = time.time() + wait_seconds
+                    LOGGER.error(
+                        "Telegram FloodWait during startup; bot actions are paused for %s seconds.",
+                        wait_seconds,
+                    )
+                    try:
+                        if getattr(Bypass, "is_connected", False):
+                            Bypass.stop()
+                    except Exception as stop_error:
+                        LOGGER.warning("Could not reset Telegram client: %s", stop_error)
+                    time.sleep(wait_seconds)
+                except Exception as exc:
+                    LOGGER.error("Telegram client failed to start: %s", exc)
+                    telegram_ready = False
+                    break
+            try:
+                idle()
+            finally:
+                Bypass.stop()
+        except Exception as exc:
+            LOGGER.warning("Telegram not available, Flask endpoints still work: %s", exc)
+            # Keep Flask running
+            flask_thread.join()
+    else:
+        LOGGER.info("Telegram not available, keeping Flask server running")
+        flask_thread.join()
+    else:
+        LOGGER.info("Telegram not available, keeping Flask server running")
         flask_thread.join()
