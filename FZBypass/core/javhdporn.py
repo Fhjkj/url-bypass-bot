@@ -1,7 +1,7 @@
 """Handler for javhdporn.net video URLs.
 
-Uses Turnstile Solver API + Playwright to bypass Cloudflare and extract
-the HLS video URL from the encrypted page.
+Overrides global browser decoding hooks to grab the decrypted
+payload right out of cast.js memory before it wraps it inside the player.
 """
 import os
 import re
@@ -10,12 +10,12 @@ from FZBypass.core.exceptions import DDLException
 
 
 async def javhdporn(url: str) -> str:
-    """Extract video URL from javhdporn.net."""
+    """Intercept client-side decryption routines directly in Playwright runtime memory."""
     from playwright.async_api import async_playwright
 
     SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7e59.up.railway.app")
 
-    # Step 1: Solve CF challenge
+    # Step 1: Solve Cloudflare to secure access cookies
     async with httpx.AsyncClient(follow_redirects=True, verify=False) as client:
         try:
             response = await client.post(
@@ -24,19 +24,19 @@ async def javhdporn(url: str) -> str:
                 timeout=120
             )
             if response.status_code != 200:
-                raise DDLException(f"Solver API returned status {response.status_code}")
+                raise DDLException(f"Cloudflare bypass dropped: Status {response.status_code}")
             result = response.json()
         except httpx.ConnectError as e:
             raise DDLException(f"Cannot connect to Solver API: {str(e)}")
         except httpx.TimeoutException as e:
             raise DDLException(f"Solver API timeout: {str(e)}")
         except Exception as e:
-            raise DDLException(f"Solver API error: {type(e).__name__}: {str(e)}")
+            raise DDLException(f"Bypass handshake crashed: {type(e).__name__}: {str(e)}")
 
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0")
 
-    # Step 2: Use Playwright to load page and trigger video decryption
+    # Step 2: Initialize Playwright Engine
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -52,125 +52,102 @@ async def javhdporn(url: str) -> str:
             ignore_https_errors=True,
             user_agent=user_agent
         )
-        page = await context.new_page()
 
+        # Insert Cloudflare authorization credentials
         if cookies:
             await context.add_cookies(cookies)
 
+        page = await context.new_page()
         video_urls = []
-        all_requests = []
 
-        async def handle_request(request):
-            req_url = request.url
-            all_requests.append(req_url)
-            if any(ext in req_url.lower() for ext in ['.m3u8', '.mp4']):
-                if req_url not in video_urls:
-                    video_urls.append(req_url)
+        # Step 3: INJECT RUNTIME MEMORY HOOK (The Cheat Code)
+        # This intercepts the exact moment cast.js decrypts the data-mpu payload string
+        await page.add_init_script("""
+            window._capturedStreams = [];
 
-        async def handle_response(response):
-            res_url = response.url
+            // Hook Base64 Decoder
+            const originalAtob = window.atob;
+            window.atob = function(str) {
+                const decoded = originalAtob(str);
+                if (decoded.includes('.m3u8') || decoded.includes('.mp4')) {
+                    window._capturedStreams.push(decoded);
+                }
+                return decoded;
+            };
+
+            // Hook JSON Parser (In case it unpacks into a config object)
+            const originalParse = JSON.parse;
+            JSON.parse = function(text) {
+                if (text.includes('.m3u8') || text.includes('.mp4')) {
+                    window._capturedStreams.push(text);
+                }
+                return originalParse(text);
+            };
+        """)
+
+        # Network listener as a fallback layer
+        async def handle_response(res):
+            res_url = res.url
             if any(ext in res_url.lower() for ext in ['.m3u8', '.mp4']):
                 if res_url not in video_urls:
                     video_urls.append(res_url)
 
-        page.on("request", handle_request)
         page.on("response", handle_response)
 
         try:
+            # Let the page load its structural frames
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
         except Exception as e:
             await browser.close()
-            raise DDLException(f"Page loading timed out: {str(e)}")
+            raise DDLException(f"Browser navigation timed out: {str(e)}")
 
-        await page.wait_for_timeout(4000)
-
-        # UPDATED ACTION BLOCK: Target the modern player containers and video components
+        # Step 4: Simulate a genuine interaction on the player area to kick-start cast.js
         try:
-            # 1. Target standard play overlay wrappers
-            await page.click(".player-container, .play-wrapper, .vjs-big-play-button", timeout=2000)
+            await page.wait_for_selector("#video-player", timeout=5000)
+            await page.click("#video-player", timeout=2000)
         except:
             pass
 
+        # Also click the play button specifically
         try:
-            # 2. Click directly on the video render surface if available
-            await page.click("video", position={"x": 100, "y": 100}, timeout=2000)
+            await page.click(".play-button", timeout=3000)
         except:
             pass
 
-        # Step 3: Loop inside any iframe layers to force underlying players open
-        frames = page.frames
-        for frame in frames:
+        # Step 5: Read the decrypted string right out of window memory
+        for _ in range(5):
+            await page.wait_for_timeout(2000)
             try:
-                # Force click video nodes inside embeds
-                await frame.click("video, .play-button, .player-poster", timeout=1500)
+                # Pull whatever strings the injected script caught inside the window runtime
+                memory_strings = await page.evaluate("window._capturedStreams")
+                for item in memory_strings:
+                    matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', item)
+                    for match in matches:
+                        clean_url = match.replace("&amp;", "&")
+                        if clean_url not in video_urls:
+                            video_urls.append(clean_url)
             except:
                 pass
-            try:
-                # Execute a universal playback event loop directly inside the window context
-                await frame.evaluate("""() => {
-                    const videos = document.querySelectorAll('video');
-                    videos.forEach(v => { v.play(); v.muted = true; });
-                }""")
-            except:
-                pass
-
-        # Give the decrypted streams 10 seconds to generate chunk keys and manifests
-        await page.wait_for_timeout(10000)
-
-        # Try to extract video URL from page JS state as fallback
-        try:
-            video_src = await page.evaluate("""() => {
-                // Check all video elements
-                const videos = document.querySelectorAll('video');
-                for (const v of videos) {
-                    if (v.src && (v.src.includes('.m3u8') || v.src.includes('.mp4'))) {
-                        return v.src;
-                    }
-                    if (v.currentSrc && (v.currentSrc.includes('.m3u8') || v.currentSrc.includes('.mp4'))) {
-                        return v.currentSrc;
-                    }
-                }
-                // Check videojs players
-                if (typeof videojs !== 'undefined') {
-                    const players = videojs.getPlayers();
-                    for (const key in players) {
-                        const player = players[key];
-                        if (player && player.src) {
-                            const src = player.src();
-                            if (src && (src.includes('.m3u8') || src.includes('.mp4'))) {
-                                return src;
-                            }
-                        }
-                    }
-                }
-                return null;
-            }""")
-            if video_src and video_src not in video_urls:
-                video_urls.append(video_src)
-        except:
-            pass
 
         await browser.close()
 
-    # Filter out advertising domains & tracking noise
-    video_urls = [
+    # Step 6: Strict Filtering & Cleanup
+    clean_streams = [
         u for u in video_urls
         if 'banner' not in u.lower()
-        and 'storagexhd' not in u.lower()
         and 'ping.m3u8' not in u.lower()
         and 'ads' not in u.lower()
+        and 'pop' not in u.lower()
     ]
 
-    # Prioritize master index manifests
-    hls_urls = [u for u in video_urls if '.m3u8' in u and 'master' in u.lower()]
+    hls_urls = [u for u in clean_streams if 'master' in u.lower() or '_auto' in u.lower()]
     if not hls_urls:
-        hls_urls = [u for u in video_urls if '.m3u8' in u and '_auto' in u.lower()]
+        hls_urls = [u for u in clean_streams if '.m3u8' in u]
     if not hls_urls:
-        hls_urls = [u for u in video_urls if '.m3u8' in u]
+        hls_urls = clean_streams
 
-    if hls_urls:
-        return hls_urls[0]
-    elif video_urls:
-        return video_urls[0]
+    # Return a solid string back to the Telegram Handler framework
+    if hls_urls and len(hls_urls) > 0:
+        return str(hls_urls[0])
     else:
-        raise DDLException("No playable streaming video source detected on the page context.")
+        raise DDLException("Page decoded securely, but no active streaming strings were released.")
