@@ -108,19 +108,17 @@ async def _extract_video_url(url):
         result = response.json()
 
     cookies = result.get("cookies", [])
-    user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0")
 
-    # Step 2: Use Playwright to load page and click play
+    # Step 2: Use Playwright to load page and trigger video decryption
     async with async_playwright() as p:
-        try:
-            browser = await p.chromium.launch(headless=True)
-        except Exception:
-            chromium_path = os.environ.get("CHROMIUM_PATH")
-            if not chromium_path or not os.path.exists(chromium_path):
-                chromium_path = shutil.which("chromium") or shutil.which("chromium-browser")
-            if not chromium_path:
-                raise
-            browser = await p.chromium.launch(headless=True, executable_path=chromium_path)
+        chromium_path = os.environ.get("CHROMIUM_PATH")
+        if not chromium_path or not os.path.exists(chromium_path):
+            chromium_path = shutil.which("chromium") or shutil.which("chromium-browser")
+        launch_options = {"headless": True}
+        if chromium_path:
+            launch_options["executable_path"] = chromium_path
+        browser = await p.chromium.launch(**launch_options)
         context = await browser.new_context(
             ignore_https_errors=True,
             user_agent=user_agent
@@ -157,44 +155,46 @@ async def _extract_video_url(url):
         except:
             pass
 
-        await page.wait_for_timeout(5000)
+        # Wait for video to load and stream segments
+        await page.wait_for_timeout(10000)
         await browser.close()
 
-        # Filter for actual video URLs
-        video_urls = [u for u in video_urls if 'banner' not in u.lower() and 'storagexhd' not in u.lower()]
+    # Filter out ads and banners
+    video_urls = [u for u in video_urls if 'banner' not in u.lower() and 'storagexhd' not in u.lower() and 'ping.m3u8' not in u.lower()]
 
-        # Prefer HLS master playlists
-        hls_urls = [u for u in video_urls if '.m3u8' in u and 'master' in u.lower()]
-        if not hls_urls:
-            hls_urls = [u for u in video_urls if '.m3u8' in u]
+    # Prefer HLS master playlists
+    hls_urls = [u for u in video_urls if '.m3u8' in u and 'master' in u.lower()]
+    if not hls_urls:
+        hls_urls = [u for u in video_urls if '.m3u8' in u and '_auto' in u.lower()]
+    if not hls_urls:
+        hls_urls = [u for u in video_urls if '.m3u8' in u]
 
-        if hls_urls:
-            return {
-                "success": True,
-                "video_url": hls_urls[0],
-                "all_urls": video_urls[:10]
-            }
-        elif video_urls:
-            return {
-                "success": True,
-                "video_url": video_urls[0],
-                "all_urls": video_urls[:10]
-            }
-        else:
-            return {"success": False, "error": "No video URL found"}
+    if hls_urls:
+        return {
+            "success": True,
+            "video_url": hls_urls[0],
+            "all_urls": video_urls[:10]
+        }
+    elif video_urls:
+        return {
+            "success": True,
+            "video_url": video_urls[0],
+            "all_urls": video_urls[:10]
+        }
+    else:
+        return {"success": False, "error": "No video URL found"}
 
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
-    
+
     # Start Flask server in background
     flask_thread = Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False), daemon=True)
     flask_thread.start()
     LOGGER.info(f"Flask server started on port {port}")
-    
+
     # Try to start Telegram client (optional)
     try:
-        from pyrogram import idle
         while True:
             try:
                 Bypass.start()

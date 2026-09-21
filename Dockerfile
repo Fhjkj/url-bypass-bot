@@ -12,7 +12,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install system dependencies for Chromium
+# Install Chromium system dependencies and browser
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         chromium \
@@ -35,19 +35,13 @@ RUN apt-get update \
         libx11-6 \
         libxcb1 \
         libxext6 \
-        libxrandr2 \
         libgl1 \
     && rm -rf /var/lib/apt/lists/* \
     && test -x /usr/bin/chromium \
     && chromium --version
 
 # Install Playwright browsers
-RUN PLAYWRIGHT_BROWSERS_PATH=/opt/render/.cache/ms-playwright \
-    playwright install --with-deps chromium 2>&1 || true
-
-# Verify browsers installed
-RUN ls -la /opt/render/.cache/ms-playwright/ 2>&1 || true
-RUN ls -la /opt/render/.cache/ms-playwright/chromium-*/chrome-linux64/ 2>&1 || true
+RUN playwright install --with-deps chromium
 
 COPY . .
 
