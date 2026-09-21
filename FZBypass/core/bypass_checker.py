@@ -68,7 +68,16 @@ async def javhdporn(url):
         user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            # Use system chromium if available, otherwise use Playwright's
+            chromium_path = os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium")
+            if os.path.exists(chromium_path):
+                browser = await p.chromium.launch(
+                    headless=True,
+                    executable_path=chromium_path
+                )
+            else:
+                browser = await p.chromium.launch(headless=True)
+            
             context = await browser.new_context(
                 ignore_https_errors=True,
                 user_agent=user_agent
