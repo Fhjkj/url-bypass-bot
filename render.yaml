@@ -3,7 +3,13 @@ services:
     name: fz-bypass-bot
     runtime: docker
     plan: starter
+    disk:
+      name: fz-chromium-profile
+      mountPath: /tmp/chromium-profile
+      sizeGB: 1
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.10
       - key: BOT_TOKEN
         sync: false
       - key: API_ID
@@ -18,7 +24,11 @@ services:
         sync: false
       - key: GOFILE_API_TOKEN
         sync: false
-      - key: SOLVER_API
-        value: https://turnstile-solver-production-7e59.up.railway.app
-      - key: BYPASS_PROXY_POOL
-        sync: false
+      - key: CHROMIUM_PROFILE_DIR
+        value: /tmp/chromium-profile
+      - key: CHROMIUM_PATH
+        value: /usr/bin/chromium
+      - key: SOLVE_TIMEOUT_MS
+        value: 45000
+      - key: SOLVE_MAX_WAIT_MS
+        value: 90000

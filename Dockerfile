@@ -1,5 +1,5 @@
 # Use the official Playwright image that includes Python and all browsers pre-installed
-FROM mcr.microsoft.com/playwright/python:latest
+FROM mcr.microsoft.com/playwright/python:v1.63.0-jammy
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
