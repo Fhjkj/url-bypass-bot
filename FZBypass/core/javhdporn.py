@@ -40,7 +40,13 @@ async def javhdporn(url: str) -> str:
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            channel="chromium",
+            args=[
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--headless=new'
+            ]
         )
         context = await browser.new_context(
             ignore_https_errors=True,
@@ -52,6 +58,14 @@ async def javhdporn(url: str) -> str:
             await context.add_cookies(cookies)
 
         video_urls = []
+        all_requests = []
+
+        async def handle_request(request):
+            req_url = request.url
+            all_requests.append(req_url)
+            if any(ext in req_url.lower() for ext in ['.m3u8', '.mp4']):
+                if req_url not in video_urls:
+                    video_urls.append(req_url)
 
         async def handle_response(response):
             res_url = response.url
@@ -59,6 +73,7 @@ async def javhdporn(url: str) -> str:
                 if res_url not in video_urls:
                     video_urls.append(res_url)
 
+        page.on("request", handle_request)
         page.on("response", handle_response)
 
         try:
@@ -101,6 +116,40 @@ async def javhdporn(url: str) -> str:
 
         # Give the decrypted streams 10 seconds to generate chunk keys and manifests
         await page.wait_for_timeout(10000)
+
+        # Try to extract video URL from page JS state as fallback
+        try:
+            video_src = await page.evaluate("""() => {
+                // Check all video elements
+                const videos = document.querySelectorAll('video');
+                for (const v of videos) {
+                    if (v.src && (v.src.includes('.m3u8') || v.src.includes('.mp4'))) {
+                        return v.src;
+                    }
+                    if (v.currentSrc && (v.currentSrc.includes('.m3u8') || v.currentSrc.includes('.mp4'))) {
+                        return v.currentSrc;
+                    }
+                }
+                // Check videojs players
+                if (typeof videojs !== 'undefined') {
+                    const players = videojs.getPlayers();
+                    for (const key in players) {
+                        const player = players[key];
+                        if (player && player.src) {
+                            const src = player.src();
+                            if (src && (src.includes('.m3u8') || src.includes('.mp4'))) {
+                                return src;
+                            }
+                        }
+                    }
+                }
+                return null;
+            }""")
+            if video_src and video_src not in video_urls:
+                video_urls.append(video_src)
+        except:
+            pass
+
         await browser.close()
 
     # Filter out advertising domains & tracking noise
