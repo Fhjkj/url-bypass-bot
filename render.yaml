@@ -30,7 +30,7 @@ services:
         value: /tmp/chromium-profile
       - key: CHROMIUM_PATH
         value: /usr/bin/chromium
-      - key: SOLVE_TIMEOUT_MS
-        value: 45000
-      - key: SOLVE_MAX_WAIT_MS
-        value: 90000
+      - key: SOLVER_API
+        value: https://turnstile-solver-production-7e59.up.railway.app
+      - key: BYPASS_PROXY_POOL
+        sync: false

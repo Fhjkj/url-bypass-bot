@@ -20,7 +20,12 @@ SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7
 
 async def solve_cf_challenge(url):
     """Use Turnstile Solver to get clearance for a URL."""
-    async with httpx.AsyncClient() as client:
+    import random
+    proxy_pool = os.environ.get("BYPASS_PROXY_POOL", "")
+    proxies = [p.strip() for p in proxy_pool.split(",") if p.strip()] if proxy_pool else []
+    proxy = random.choice(proxies) if proxies else None
+    
+    async with httpx.AsyncClient(proxy=proxy) as client:
         response = await client.post(
             f"{SOLVER_API}/solve-challenge",
             json={"siteurl": url, "timeout": 60},

@@ -32,13 +32,24 @@ async def javhdporn(url):
     import asyncio
     import json
     import os
+    import random
     from playwright.async_api import async_playwright
     import httpx
 
     SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7e59.up.railway.app")
+    
+    # Proxy pool for hiding solver API calls
+    proxy_pool = os.environ.get("BYPASS_PROXY_POOL", "")
+    proxies = [p.strip() for p in proxy_pool.split(",") if p.strip()] if proxy_pool else []
+
+    def get_proxy():
+        if proxies:
+            return random.choice(proxies)
+        return None
 
     async def solve_cf_challenge(target_url):
-        async with httpx.AsyncClient() as client:
+        proxy = get_proxy()
+        async with httpx.AsyncClient(proxy=proxy) as client:
             response = await client.post(
                 f"{SOLVER_API}/solve-challenge",
                 json={"siteurl": target_url, "timeout": 60},
