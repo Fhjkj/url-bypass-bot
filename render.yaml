@@ -1,13 +1,11 @@
 services:
   - type: web
     name: fz-bypass-bot
-    runtime: python
-    buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: python bot.py
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     plan: starter
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.10.12"
       - key: BOT_TOKEN
         sync: false
       - key: API_ID
@@ -22,12 +20,6 @@ services:
         sync: false
       - key: GOFILE_API_TOKEN
         sync: false
-      - key: CHROMIUM_PROFILE_DIR
-        value: /tmp/chromium-profile
-      - key: CHROMIUM_PATH
-        value: /opt/render/project/src/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell
-      - key: PLAYWRIGHT_BROWSERS_PATH
-        value: /opt/render/project/src/ms-playwright
       - key: SOLVER_API
         value: https://turnstile-solver-production-7e59.up.railway.app
       - key: BYPASS_PROXY_POOL

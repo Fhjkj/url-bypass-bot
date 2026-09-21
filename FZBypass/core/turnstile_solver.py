@@ -96,6 +96,7 @@ def _resolve_browser_executable() -> Optional[str]:
         "/tmp/playwright-browsers",
         "/ms-playwright",
         "/opt/render/.cache/ms-playwright",
+        "/root/.cache/ms-playwright",
     ):
         if value and value != "0":
             roots.append(Path(value))
