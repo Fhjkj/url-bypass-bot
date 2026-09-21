@@ -48,15 +48,16 @@ async def extract_video_url(url):
     
     # Step 2: Use Playwright to load page and click play
     async with async_playwright() as p:
-        # Use system chromium if available, otherwise use Playwright's
-        chromium_path = os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium")
-        if os.path.exists(chromium_path):
-            browser = await p.chromium.launch(
-                headless=True,
-                executable_path=chromium_path
-            )
-        else:
+        # Use Playwright's bundled Chromium (more reliable than system)
+        # Fall back to system Chromium if Playwright browsers not available
+        try:
             browser = await p.chromium.launch(headless=True)
+        except Exception:
+            chromium_path = os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium")
+            if os.path.exists(chromium_path):
+                browser = await p.chromium.launch(headless=True, executable_path=chromium_path)
+            else:
+                raise
         
         context = await browser.new_context(
             ignore_https_errors=True,
