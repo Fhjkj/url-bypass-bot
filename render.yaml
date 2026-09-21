@@ -30,6 +30,8 @@ services:
         value: /tmp/chromium-profile
       - key: CHROMIUM_PATH
         value: /usr/bin/chromium
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/.cache/ms-playwright
       - key: SOLVER_API
         value: https://turnstile-solver-production-7e59.up.railway.app
       - key: BYPASS_PROXY_POOL

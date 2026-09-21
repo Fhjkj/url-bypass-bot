@@ -13,7 +13,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Chromium system dependencies and browser
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         chromium \
@@ -41,10 +40,10 @@ RUN apt-get update \
     && test -x /usr/bin/chromium \
     && chromium --version
 
-# Install Playwright browsers to the expected cache path
 RUN mkdir -p /opt/render/.cache/ms-playwright \
-    && playwright install --with-deps chromium \
-    && ls -la /opt/render/.cache/ms-playwright/
+    && playwright install chromium --with-deps \
+    && ls -la /opt/render/.cache/ms-playwright/ \
+    && test -f /opt/render/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell
 
 COPY . .
 
