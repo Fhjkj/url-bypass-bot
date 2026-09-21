@@ -89,9 +89,9 @@ def bypass():
 
 
 async def _extract_video_url(url):
-    """Extract video URL using Playwright after solving Cloudflare."""
-    from playwright.async_api import async_playwright
+    """Extract video URL by solving CF challenge and parsing HTML."""
     import httpx
+    import re
 
     SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7e59.up.railway.app")
 
@@ -106,73 +106,49 @@ async def _extract_video_url(url):
             return {"success": False, "error": "Failed to solve CF challenge"}
         result = response.json()
 
-    cookies = result.get("cookies", [])
-    user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    html = result.get("html", "")
+    if not html:
+        return {"success": False, "error": "No HTML returned from Solver API"}
 
-    # Step 2: Use Playwright to load page and click play
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            ignore_https_errors=True,
-            user_agent=user_agent
-        )
-        page = await context.new_page()
+    # Step 2: Extract video URL directly from HTML
+    hls_urls = re.findall(r'https?://[^\s"\'<>]+\.m3u8[^\s"\'<>]*', html)
+    hls_urls = [
+        u for u in hls_urls
+        if 'banner' not in u.lower()
+        and 'storagexhd' not in u.lower()
+        and 'ping.m3u8' not in u.lower()
+        and 'ads' not in u.lower()
+        and 'doppiocdn' in u.lower()
+    ]
 
-        for cookie in cookies:
-            await context.add_cookies([cookie])
+    master_urls = [u for u in hls_urls if 'master' in u.lower()]
+    if not master_urls:
+        master_urls = [u for u in hls_urls if '_auto' in u.lower()]
+    if not master_urls:
+        master_urls = hls_urls
 
-        video_urls = []
+    if master_urls:
+        return {
+            "success": True,
+            "video_url": master_urls[0],
+            "all_urls": hls_urls[:10]
+        }
 
-        async def handle_request(request):
-            req_url = request.url
-            if any(ext in req_url.lower() for ext in ['.m3u8', '.mp4']):
-                if req_url not in video_urls:
-                    video_urls.append(req_url)
+    mp4_urls = re.findall(r'https?://[^\s"\'<>]+\.mp4[^\s"\'<>]*', html)
+    mp4_urls = [
+        u for u in mp4_urls
+        if 'banner' not in u.lower()
+        and 'storagexhd' not in u.lower()
+        and 'ads' not in u.lower()
+    ]
+    if mp4_urls:
+        return {
+            "success": True,
+            "video_url": mp4_urls[0],
+            "all_urls": mp4_urls[:10]
+        }
 
-        page.on("request", handle_request)
-
-        await page.goto(url, wait_until="networkidle", timeout=30000)
-        await page.wait_for_timeout(3000)
-
-        # Click play button to trigger decryption
-        try:
-            await page.click(".play-button", timeout=5000)
-            await page.wait_for_timeout(2000)
-        except:
-            pass
-
-        # Also try clicking video player area
-        try:
-            await page.click("#video-player", position={"x": 400, "y": 300}, timeout=5000)
-            await page.wait_for_timeout(2000)
-        except:
-            pass
-
-        await page.wait_for_timeout(5000)
-        await browser.close()
-
-        # Filter for actual video URLs
-        video_urls = [u for u in video_urls if 'banner' not in u.lower() and 'storagexhd' not in u.lower()]
-
-        # Prefer HLS master playlists
-        hls_urls = [u for u in video_urls if '.m3u8' in u and 'master' in u.lower()]
-        if not hls_urls:
-            hls_urls = [u for u in video_urls if '.m3u8' in u]
-
-        if hls_urls:
-            return {
-                "success": True,
-                "video_url": hls_urls[0],
-                "all_urls": video_urls[:10]
-            }
-        elif video_urls:
-            return {
-                "success": True,
-                "video_url": video_urls[0],
-                "all_urls": video_urls[:10]
-            }
-        else:
-            return {"success": False, "error": "No video URL found"}
+    return {"success": False, "error": "No playable streaming video source detected in page HTML."}
 
 
 if __name__ == "__main__":
