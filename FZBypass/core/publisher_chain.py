@@ -56,6 +56,10 @@ def _form(html: str, base_url: str):
 
 def _location(html: str, base_url: str) -> str | None:
     soup = BeautifulSoup(html, "html.parser")
+    for anchor in soup.find_all("a", href=True):
+        href = anchor.get("href", "")
+        if "safelink_redirect=" in href:
+            return urljoin(base_url, href.replace("&amp;", "&"))
     meta = soup.find("meta", attrs={"http-equiv": lambda value: value and value.lower() == "refresh"})
     if meta and meta.get("content"):
         found = search(r"url\s*=\s*(.+)$", meta["content"], flags=2)
@@ -220,14 +224,22 @@ async def resolve_publisher_chain(url: str, max_hops: int = 8) -> str:
     if cached := get_cached(url):
         return cached
     if any(marker in (urlparse(url).hostname or "").lower() for marker in SOFTURL_HOST_MARKERS):
-        curl_result = await _resolve_softurl_curl(url, configured_proxies())
+        proxies = configured_proxies()
+        try:
+            curl_result = await asyncio.wait_for(_resolve_softurl_curl(url, proxies), timeout=25)
+        except asyncio.TimeoutError:
+            curl_result = None
         if curl_result:
             save_verified(url, curl_result, "softurl-curl-cffi")
             return curl_result
-        browser_result = await _resolve_softurl_browser(url, configured_proxies())
+        try:
+            browser_result = await asyncio.wait_for(_resolve_softurl_browser(url, proxies), timeout=50)
+        except asyncio.TimeoutError:
+            browser_result = None
         if browser_result:
             save_verified(url, browser_result, "softurl-playwright")
             return browser_result
+        raise DDLException("SoftURL ad gate timed out before exposing the final destination")
     attempts = [None, *configured_proxies()]
     errors = []
     for selected_proxy in attempts:
