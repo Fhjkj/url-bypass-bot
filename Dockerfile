@@ -1,7 +1,7 @@
 # Use your preferred Python base image
 FROM python:3.10-slim
 
-# 1. FORCE Playwright to install and look for browsers in Render's folder
+# Force Playwright to read/write from Render's exact expected path
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/render/.cache/ms-playwright
 ENV CHROMIUM_PATH=/usr/bin/chromium
 ENV SOLVER_API=https://turnstile-solver-production-7e59.up.railway.app
@@ -9,13 +9,12 @@ ENV BYPASS_PROXY_POOL="http://A6b4nU8pS:fsjp9n9t7@172.120.57.232:62426,http://Lw
 
 WORKDIR /app
 
-# 2. Install your Python dependencies
+# Install standard dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 3. Download the specific Chromium browser and its Linux OS system libraries
-RUN playwright install chromium --with-deps
+# CRITICAL FIX: Download both chromium AND chromium-headless-shell
+RUN playwright install chromium chromium-headless-shell --with-deps
 
-# 4. Copy your script and run it
 COPY . .
 CMD ["python", "bot.py"]
