@@ -147,30 +147,39 @@ async def _extract_video_url(url):
             await browser.close()
             return {"success": False, "error": f"Page loading timed out: {str(e)}"}
 
-        await page.wait_for_timeout(5000)
+        await page.wait_for_timeout(4000)
 
-        # Traverse inside iframes to hit embedded video host players
+        # UPDATED ACTION BLOCK: Target the modern player containers and video components
+        try:
+            # 1. Target standard play overlay wrappers
+            await page.click(".player-container, .play-wrapper, .vjs-big-play-button", timeout=2000)
+        except:
+            pass
+
+        try:
+            # 2. Click directly on the video render surface if available
+            await page.click("video", position={"x": 100, "y": 100}, timeout=2000)
+        except:
+            pass
+
+        # Step 3: Loop inside any iframe layers to force underlying players open
         frames = page.frames
         for frame in frames:
             try:
-                await frame.click("video", timeout=2000)
+                # Force click video nodes inside embeds
+                await frame.click("video, .play-button, .player-poster", timeout=1500)
             except:
                 pass
             try:
+                # Execute a universal playback event loop directly inside the window context
                 await frame.evaluate("""() => {
-                    const v = document.querySelector('video');
-                    if(v) { v.play(); v.muted = true; }
+                    const videos = document.querySelectorAll('video');
+                    videos.forEach(v => { v.play(); v.muted = true; });
                 }""")
             except:
                 pass
 
-        # Global playback click fallback
-        try:
-            await page.click(".play-button", timeout=3000)
-        except:
-            pass
-
-        # Allow stream links to buffer and reveal themselves in responses
+        # Give the decrypted streams 10 seconds to generate chunk keys and manifests
         await page.wait_for_timeout(10000)
         await browser.close()
 
