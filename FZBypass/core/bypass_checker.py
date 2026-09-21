@@ -536,10 +536,6 @@ async def direct_link_checker(link, onlylink=False):
     elif bool(match(r"https?:\/\/(?:www\.)?vplink\.in\/\S+", link)):
         blink = await extract_final_destination(link)
 
-    # Javhdporn / encrypted video sites
-    elif bool(match(r"https?:\/\/(?:www\.)?javhdporn\.net\/video\/\S+", link)):
-        blink = await javhdporn(link)
-
     # DL Sites
     elif bool(match(r"https?:\/\/cinevood\.\S+", link)):
         return await cinevood(link)

@@ -39,16 +39,10 @@ async def javhdporn(url: str) -> str:
 
 # Step 2: Use Playwright to load page and trigger video decryption
     async with async_playwright() as p:
-        # Use turnstile_solver's robust browser resolution
-        from FZBypass.core.turnstile_solver import _ensure_playwright_browser
-        executable = _ensure_playwright_browser()
-        launch_opts = {
-            "headless": True,
-            "args": ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--headless=new'],
-        }
-        if executable:
-            launch_opts["executable_path"] = executable
-        browser = await p.chromium.launch(**launch_opts)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+        )
         context = await browser.new_context(
             ignore_https_errors=True,
             user_agent=user_agent
@@ -85,8 +79,33 @@ async def javhdporn(url: str) -> str:
         except:
             pass
 
+        # Trigger video play via JS
+        try:
+            await page.evaluate("""() => {
+                const video = document.querySelector('video');
+                if (video) {
+                    video.play();
+                    video.muted = true;
+                }
+                const wpst = document.querySelector('#wpst-video');
+                if (wpst) {
+                    wpst.play();
+                    wpst.muted = true;
+                }
+                // Try to trigger videojs player
+                if (typeof videojs !== 'undefined') {
+                    const players = videojs.getPlayers();
+                    for (const key in players) {
+                        if (players[key]) players[key].play();
+                    }
+                }
+            }""")
+            await page.wait_for_timeout(2000)
+        except:
+            pass
+
         # Wait for video to load and stream segments
-        await page.wait_for_timeout(10000)
+        await page.wait_for_timeout(15000)
         await browser.close()
 
     # Filter out ads and banners
