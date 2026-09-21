@@ -91,10 +91,10 @@ def _resolve_browser_executable() -> Optional[str]:
     for value in (
         os.getenv("PLAYWRIGHT_BROWSERS_PATH"),
         os.getenv("PLAYWRIGHT_RUNTIME_BROWSERS_PATH"),
+        "/opt/render/project/src/.cache/ms-playwright",
         "/tmp/playwright-browsers",
         "/ms-playwright",
         "/opt/render/.cache/ms-playwright",
-        "/opt/render/project/src/.cache/ms-playwright",
     ):
         if value and value != "0":
             roots.append(Path(value))

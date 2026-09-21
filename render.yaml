@@ -5,10 +5,6 @@ services:
     buildCommand: chmod +x build.sh && ./build.sh
     startCommand: python bot.py
     plan: starter
-    disk:
-      name: fz-chromium-profile
-      mountPath: /opt/render/project/src/.cache/ms-playwright
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.10.12"
@@ -30,8 +26,6 @@ services:
         value: /tmp/chromium-profile
       - key: CHROMIUM_PATH
         value: /usr/bin/chromium
-      - key: PLAYWRIGHT_BROWSERS_PATH
-        value: /opt/render/project/src/.cache/ms-playwright
       - key: SOLVER_API
         value: https://turnstile-solver-production-7e59.up.railway.app
       - key: BYPASS_PROXY_POOL
