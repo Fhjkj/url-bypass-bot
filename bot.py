@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import shutil
 from logging import getLogger
 from threading import Thread
 
@@ -111,7 +112,15 @@ async def _extract_video_url(url):
 
     # Step 2: Use Playwright to load page and click play
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        try:
+            browser = await p.chromium.launch(headless=True)
+        except Exception:
+            chromium_path = os.environ.get("CHROMIUM_PATH")
+            if not chromium_path or not os.path.exists(chromium_path):
+                chromium_path = shutil.which("chromium") or shutil.which("chromium-browser")
+            if not chromium_path:
+                raise
+            browser = await p.chromium.launch(headless=True, executable_path=chromium_path)
         context = await browser.new_context(
             ignore_https_errors=True,
             user_agent=user_agent

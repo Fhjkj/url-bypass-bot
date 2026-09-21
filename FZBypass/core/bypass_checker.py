@@ -1,4 +1,5 @@
 from re import match
+import shutil
 from urllib.parse import urlparse
 
 from FZBypass.core.bypass_dlinks import *
@@ -72,7 +73,9 @@ async def javhdporn(url):
             try:
                 browser = await p.chromium.launch(headless=True)
             except Exception:
-                chromium_path = os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium")
+                chromium_path = os.environ.get("CHROMIUM_PATH")
+                if not chromium_path or not os.path.exists(chromium_path):
+                    chromium_path = shutil.which("chromium") or shutil.which("chromium-browser") or "/usr/bin/chromium"
                 if os.path.exists(chromium_path):
                     browser = await p.chromium.launch(headless=True, executable_path=chromium_path)
                 else:

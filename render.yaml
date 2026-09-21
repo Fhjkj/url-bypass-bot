@@ -29,7 +29,7 @@ services:
       - key: CHROMIUM_PROFILE_DIR
         value: /tmp/chromium-profile
       - key: CHROMIUM_PATH
-        value: /usr/bin/chromium-browser
+        value: /usr/bin/chromium
       - key: SOLVER_API
         value: https://turnstile-solver-production-7e59.up.railway.app
       - key: BYPASS_PROXY_POOL
