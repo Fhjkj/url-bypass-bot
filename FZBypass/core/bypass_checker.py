@@ -1,5 +1,7 @@
 from re import match
+import asyncio
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
 from FZBypass.core.bypass_dlinks import *
@@ -14,6 +16,17 @@ from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import gofile, GofileResult
 from FZBypass.core.provider_scrapers import filebee, gdflix, hubcloud, tmbcloud, toonworld_redirect, ProviderFileResult
 from FZBypass.core.javhdporn import javhdporn
+
+# Dedicated thread pool for heavy browser actions (Playwright).
+# Running Playwright in a separate thread with its own event loop
+# prevents blocking pyrogram's Telegram message handler.
+browser_executor = ThreadPoolExecutor(max_workers=3)
+
+
+def _run_javhdporn_sync(url: str) -> str:
+    """Sync wrapper that runs javhdporn in a fresh event loop inside
+    a dedicated worker thread, isolating Playwright from pyrogram's loop."""
+    return asyncio.run(javhdporn(url))
 
 fmed_list = [
     "fembed.net",
@@ -53,7 +66,8 @@ async def direct_link_checker(link, onlylink=False):
     # FORCE INTERCEPT: Route javhdporn.net URLs straight to the handler
     # before any other regex checks can misroute them.
     if "javhdporn.net" in link.lower():
-        return await javhdporn(link)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(browser_executor, _run_javhdporn_sync, link)
 
     # CRITICAL FIX: If the link is already a processed streaming media file,
     # stop running regex checks and return it immediately! This prevents
@@ -477,7 +491,8 @@ async def direct_link_checker(link, onlylink=False):
     elif bool(match(r"https?:\/\/.+\.technicalatg\.\S+", link)):
         raise DDLException("Bypass Not Allowed !")
     elif bool(match(r"https?:\/\/(?:www\.)?javhdporn\.\S+", link)):
-        return await javhdporn(link)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(browser_executor, _run_javhdporn_sync, link)
     else:
         raise DDLException(
             f"<i>No Bypass Function Found for your Link :</i> <code>{link}</code>"
