@@ -132,19 +132,25 @@ async def javhdporn(url: str) -> str:
         await browser.close()
 
     # Step 6: Strict Filtering & Cleanup
+    # Exclude ad/banner/tracking noise and related-video thumbnails
     clean_streams = [
         u for u in video_urls
         if 'banner' not in u.lower()
         and 'ping.m3u8' not in u.lower()
         and 'ads' not in u.lower()
         and 'pop' not in u.lower()
+        and 'storagexhd' not in u.lower()
+        and 'thumbnail' not in u.lower()
+        and 'medium' not in u.lower()
+        and 'thumb' not in u.lower()
     ]
 
-    hls_urls = [u for u in clean_streams if 'master' in u.lower() or '_auto' in u.lower()]
+    # Prioritize HLS master playlists (the actual video stream)
+    hls_urls = [u for u in clean_streams if '.m3u8' in u and ('master' in u.lower() or '_auto' in u.lower())]
     if not hls_urls:
         hls_urls = [u for u in clean_streams if '.m3u8' in u]
     if not hls_urls:
-        hls_urls = clean_streams
+        hls_urls = [u for u in clean_streams if '.mp4' in u]
 
     # Return a solid string back to the Telegram Handler framework
     if hls_urls and len(hls_urls) > 0:
