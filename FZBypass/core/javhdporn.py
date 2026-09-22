@@ -141,6 +141,11 @@ async def javhdporn(url: str) -> str:
                     await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
                 else:
                     await play_btn.click(timeout=2000, force=True)
+                # Wait for navigation to complete (stripchat.com loads)
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
         except Exception as e:
             LOGGER.debug("Play button click error: %s", e)
 
@@ -164,6 +169,10 @@ async def javhdporn(url: str) -> str:
             if master_urls:
                 break
             await page.wait_for_timeout(1000)
+
+        # Log what we captured for debugging
+        LOGGER.info("javhdporn: captured %d HLS URLs, %d MP4 URLs, final page: %s",
+                     len(hls_urls), len(mp4_urls), page.url[:200])
 
         await browser.close()
 
