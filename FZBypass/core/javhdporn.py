@@ -7,8 +7,11 @@ import os
 import re
 import random
 import time
+import logging
 import httpx
 from FZBypass.core.exceptions import DDLException
+
+LOGGER = logging.getLogger(__name__)
 
 # Cache valid Cloudflare bypass credentials to eliminate duplicate
 # browser cycles on Render (saves CPU and reduces Solver API load).
@@ -120,19 +123,31 @@ async def javhdporn(url: str) -> str:
 
         page.on("response", handle_response)
 
+        # Also capture ALL network response URLs (not just .m3u8/.mp4) so we
+        # can see what the player is actually requesting.
+        all_network_urls = []
+        def handle_response_all(res):
+            try:
+                u = res.url
+                if u not in all_network_urls:
+                    all_network_urls.append(u)
+            except Exception:
+                pass
+        page.on("response", handle_response_all)
+
         # RUNTIME MEMORY HOOKS: cast.js decrypts the data-mpu payload and
         # assigns the result directly into JS variables / video.src without
         # firing a network request. The response listener above would never
         # see it. These hooks intercept the decrypted URL the moment it
-        # appears in memory.
+        # appears in memory. We capture ALL strings (not just .m3u8/.mp4)
+        # because the decrypted URL may be a redirect or a different format.
         await page.add_init_script("""
             (() => {
                 const captured = [];
-                const targetExts = ['.m3u8', '.mp4', '.webm'];
-                const isTarget = (s) => typeof s === 'string' && targetExts.some(e => s.includes(e));
+                const isUrl = (s) => typeof s === 'string' && s.startsWith('http');
 
                 function record(url) {
-                    if (isTarget(url) && !captured.includes(url)) {
+                    if (isUrl(url) && !captured.includes(url)) {
                         captured.push(url);
                     }
                 }
@@ -146,7 +161,7 @@ async def javhdporn(url: str) -> str:
                     });
                 }
 
-                // Hook HTMLMediaElement.prototype.setAttribute for src
+                // Hook HTMLMediaElement.setAttribute for src
                 const origSetAttr = HTMLElement.prototype.setAttribute;
                 HTMLElement.prototype.setAttribute = function(name, value) {
                     if (name.toLowerCase() === 'src') record(value);
@@ -168,11 +183,18 @@ async def javhdporn(url: str) -> str:
                     return origFetch.apply(this, args);
                 };
 
-                // Hook XMLHttpRequest send
+                // Hook XMLHttpRequest open
                 const origOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
                     record(String(url));
                     return origOpen.apply(this, arguments);
+                };
+
+                // Hook video.play / video.srcObject
+                const origPlay = HTMLVideoElement.prototype.play;
+                HTMLVideoElement.prototype.play = function() {
+                    if (this.src) record(this.src);
+                    return origPlay.apply(this, arguments);
                 };
 
                 // Expose captured list for later polling
@@ -190,6 +212,68 @@ async def javhdporn(url: str) -> str:
         except Exception as e:
             await browser.close()
             raise DDLException(f"Browser navigation failed: {str(e)}")
+
+        # RE-INJECT HOOKS AFTER PAGE LOAD: Some sites load cast.js in a way
+        # that runs before add_init_script takes effect. Re-applying the
+        # hooks after navigation ensures they're active when decryption runs.
+        try:
+            await page.evaluate("""
+                (() => {
+                    if (window.__video_hooks_applied) return;
+                    window.__video_hooks_applied = true;
+                    const captured = window.__video_urls_captured || [];
+                    const isUrl = (s) => typeof s === 'string' && s.startsWith('http');
+
+                    function record(url) {
+                        if (isUrl(url) && !captured.includes(url)) {
+                            captured.push(url);
+                        }
+                    }
+
+                    const origSrc = Object.getOwnPropertyDescriptor(HTMLVideoElement.prototype, 'src');
+                    if (origSrc && origSrc.set) {
+                        Object.defineProperty(HTMLVideoElement.prototype, 'src', {
+                            set: function(v) { record(v); origSrc.set.call(this, v); },
+                            configurable: true,
+                        });
+                    }
+
+                    const origSetAttr = HTMLElement.prototype.setAttribute;
+                    HTMLElement.prototype.setAttribute = function(name, value) {
+                        if (name.toLowerCase() === 'src') record(value);
+                        return origSetAttr.call(this, name, value);
+                    };
+
+                    const origAtob = window.atob;
+                    window.atob = function(s) {
+                        const out = origAtob(s);
+                        try { record(out); } catch(e) {}
+                        return out;
+                    };
+
+                    const origFetch = window.fetch;
+                    window.fetch = function(...args) {
+                        if (args[0]) record(String(args[0]));
+                        return origFetch.apply(this, args);
+                    };
+
+                    const origOpen = XMLHttpRequest.prototype.open;
+                    XMLHttpRequest.prototype.open = function(method, url) {
+                        record(String(url));
+                        return origOpen.apply(this, arguments);
+                    };
+
+                    const origPlay = HTMLVideoElement.prototype.play;
+                    HTMLVideoElement.prototype.play = function() {
+                        if (this.src) record(this.src);
+                        return origPlay.apply(this, arguments);
+                    };
+
+                    window.__video_urls_captured = captured;
+                })();
+            """)
+        except Exception:
+            pass
 
         # Step 5: Trigger synthetic mouse events to unpack the _0x3fe11f listener hooks
         try:
@@ -218,9 +302,14 @@ async def javhdporn(url: str) -> str:
             except Exception:
                 pass
             # Early exit: stop waiting once we have a valid stream URL
-            if any('.m3u8' in u or ('.mp4' in u and 'doppiocdn' in u.lower()) for u in video_urls):
+            if any(('.m3u8' in u or ('.mp4' in u and 'doppiocdn' in u.lower())) for u in video_urls):
                 break
             await page.wait_for_timeout(2000)
+
+        # Merge in any network URLs we captured (for diagnostics)
+        for u in all_network_urls:
+            if u not in video_urls:
+                video_urls.append(u)
 
         await browser.close()
 
@@ -256,4 +345,8 @@ async def javhdporn(url: str) -> str:
     if hls_urls and len(hls_urls) > 0:
         return hls_urls[0]  # Grab the top clean asset path string
     else:
+        # Debug dump: show what we actually captured so we can diagnose
+        # why filtering dropped everything.
+        from FZBypass import LOGGER
+        LOGGER.warning("javhdporn: captured %d raw URLs: %s", len(video_urls), video_urls[:20])
         raise DDLException("Ad-filter verified, but the primary movie asset engine did not respond in time.")
