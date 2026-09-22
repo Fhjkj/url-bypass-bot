@@ -21,8 +21,8 @@ from playwright.async_api import async_playwright, Error as PlaywrightError, Tim
 from FZBypass import LOGGER
 
 PROFILE_DIR = os.getenv("CHROMIUM_PROFILE_DIR", "/tmp/chromium-profile")
-DEFAULT_TIMEOUT_MS = int(os.getenv("SOLVE_TIMEOUT_MS", "45000"))
-MAX_WAIT_MS = int(os.getenv("SOLVE_MAX_WAIT_MS", "90000"))
+DEFAULT_TIMEOUT_MS = int(os.getenv("SOLVE_TIMEOUT_MS", "30000"))
+MAX_WAIT_MS = int(os.getenv("SOLVE_MAX_WAIT_MS", "60000"))
 
 TURNSTILE_SELECTORS = (
     "input[name='cf-verified-token']",
