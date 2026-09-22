@@ -42,10 +42,10 @@ async def javhdporn(url: str) -> str:
     except Exception:
         pass
 
-    # Fallback: use the local Playwright-based Turnstile solver
+    # Fallback: use the local Playwright-based Turnstile solver (async version)
     if not result:
-        from FZBypass.core.turnstile_solver import solve_sync
-        local_result = solve_sync(url, timeout_ms=45000, headless=True)
+        from FZBypass.core.turnstile_solver import solve_challenge
+        local_result = await solve_challenge(url, timeout_ms=45000)
         if local_result.success:
             result = {
                 "cookies": local_result.cookies,
