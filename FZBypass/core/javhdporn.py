@@ -204,7 +204,6 @@ async def javhdporn(url: str) -> str:
                     try {
                         if (typeof message === 'string') record(message);
                         else if (message && typeof message === 'object') {
-                            // Walk the object looking for URL-like strings
                             const walk = (obj) => {
                                 if (!obj || typeof obj !== 'object') return;
                                 if (typeof obj === 'string') { record(obj); return; }
@@ -219,6 +218,52 @@ async def javhdporn(url: str) -> str:
                     } catch(e) {}
                     return origPostMessage.call(this, message, targetOrigin, transfer);
                 };
+
+                // Hook addEventListener to catch 'message' events from any origin
+                const origAddEventListener = window.addEventListener;
+                window.addEventListener = function(type, listener, options) {
+                    if (type === 'message') {
+                        const wrapped = function(e) {
+                            try {
+                                const data = e && e.data;
+                                if (typeof data === 'string') record(data);
+                                else if (data && typeof data === 'object') {
+                                    const walk = (obj) => {
+                                        if (!obj || typeof obj !== 'object') return;
+                                        if (typeof obj === 'string') { record(obj); return; }
+                                        for (const key of Object.keys(obj)) {
+                                            const val = obj[key];
+                                            if (typeof val === 'string') record(val);
+                                            else walk(val);
+                                        }
+                                    };
+                                    walk(data);
+                                }
+                            } catch(e) {}
+                            return listener.apply(this, arguments);
+                        };
+                        return origAddEventListener.call(this, type, wrapped, options);
+                    }
+                    return origAddEventListener.call(this, type, listener, options);
+                };
+
+                // Hook onmessage property
+                const origOnMessage = window.onmessage;
+                Object.defineProperty(window, 'onmessage', {
+                    set: function(v) {
+                        const self = this;
+                        this._onmessage = v;
+                        origAddEventListener.call(window, 'message', function(e) {
+                            try {
+                                const data = e && e.data;
+                                if (typeof data === 'string') record(data);
+                            } catch(e) {}
+                            if (typeof v === 'function') return v.call(self, e);
+                        });
+                    },
+                    get: function() { return this._onmessage; },
+                    configurable: true,
+                });
 
                 // Expose captured list for later polling
                 window.__video_urls_captured = captured;
@@ -314,6 +359,51 @@ async def javhdporn(url: str) -> str:
                         return origPostMessage.call(this, message, targetOrigin, transfer);
                     };
 
+                    // Hook addEventListener to catch 'message' events from any origin
+                    const origAddEventListener = window.addEventListener;
+                    window.addEventListener = function(type, listener, options) {
+                        if (type === 'message') {
+                            const wrapped = function(e) {
+                                try {
+                                    const data = e && e.data;
+                                    if (typeof data === 'string') record(data);
+                                    else if (data && typeof data === 'object') {
+                                        const walk = (obj) => {
+                                            if (!obj || typeof obj !== 'object') return;
+                                            if (typeof obj === 'string') { record(obj); return; }
+                                            for (const key of Object.keys(obj)) {
+                                                const val = obj[key];
+                                                if (typeof val === 'string') record(val);
+                                                else walk(val);
+                                            }
+                                        };
+                                        walk(data);
+                                    }
+                                } catch(e) {}
+                                return listener.apply(this, arguments);
+                            };
+                            return origAddEventListener.call(this, type, wrapped, options);
+                        }
+                        return origAddEventListener.call(this, type, listener, options);
+                    };
+
+                    // Hook onmessage property
+                    Object.defineProperty(window, 'onmessage', {
+                        set: function(v) {
+                            const self = this;
+                            this._onmessage = v;
+                            origAddEventListener.call(window, 'message', function(e) {
+                                try {
+                                    const data = e && e.data;
+                                    if (typeof data === 'string') record(data);
+                                } catch(e) {}
+                                if (typeof v === 'function') return v.call(self, e);
+                            });
+                        },
+                        get: function() { return this._onmessage; },
+                        configurable: true,
+                    });
+
                     window.__video_urls_captured = captured;
                 })();
             """)
@@ -342,23 +432,53 @@ async def javhdporn(url: str) -> str:
             try:
                 captured = await page.evaluate("""() => {
                     const urls = (window.__video_urls_captured || []).slice();
-                    // Also scan iframe content documents for video URLs
-                    const iframes = Array.from(document.querySelectorAll('iframe'));
                     const markers = ['.m3u8', '.mp4', 'doppiocdn', 'edge-hls'];
                     const re = /https?:\\/\\/[^"'\\s<>]+/g;
+
+                    function scan(text) {
+                        if (!text) return;
+                        const matches = text.match(re) || [];
+                        for (const m of matches) {
+                            const lower = m.toLowerCase();
+                            if (markers.some(mk => lower.includes(mk)) && !urls.includes(m)) {
+                                urls.push(m);
+                            }
+                        }
+                    }
+
+                    // Scan iframe content documents
+                    const iframes = Array.from(document.querySelectorAll('iframe'));
                     for (const iframe of iframes) {
                         try {
                             const doc = iframe.contentDocument;
                             if (doc && doc.documentElement) {
-                                const html = doc.documentElement.outerHTML;
-                                const matches = html.match(re) || [];
-                                for (const m of matches) {
-                                    const lower = m.toLowerCase();
-                                    if (markers.some(mk => lower.includes(mk))) urls.push(m);
-                                }
+                                scan(doc.documentElement.outerHTML);
                             }
                         } catch(e) {}
                     }
+
+                    // Scan all script tags
+                    const scripts = Array.from(document.querySelectorAll('script'));
+                    for (const s of scripts) scan(s.textContent || s.innerText);
+
+                    // Scan all global window properties for URL-like strings
+                    try {
+                        for (const key of Object.keys(window)) {
+                            try {
+                                const val = window[key];
+                                if (typeof val === 'string') scan(val);
+                                else if (val && typeof val === 'object') {
+                                    for (const k2 of Object.keys(val)) {
+                                        try {
+                                            const v2 = val[k2];
+                                            if (typeof v2 === 'string') scan(v2);
+                                        } catch(e) {}
+                                    }
+                                }
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
+
                     return urls;
                 }""")
                 for u in captured:
