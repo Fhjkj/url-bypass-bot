@@ -45,47 +45,32 @@ async def javhdporn(url: str) -> str:
             "user_agent": CF_COOKIE_CACHE["user_agent"],
         }
     else:
-        # Step 2: Quick health check on external Solver API (5s max)
-        api_reachable = False
+        # Step 2: Rapid external API call with short timeout
         try:
             proxy = get_proxy()
             async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
-                health = await client.get(f"{SOLVER_API}/health", timeout=5)
-                if health.status_code == 200:
-                    api_reachable = True
-        except Exception:
+                response = await client.post(
+                    f"{SOLVER_API}/solve-challenge",
+                    json={"siteurl": url, "timeout": 30},
+                    timeout=12,
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                else:
+                    raise DDLException(f"External infrastructure returned status: {response.status_code}")
+        except httpx.RequestError:
+            # If the server is completely down or unreachable, bypass immediately
             pass
 
-        # Step 3: Attempt external API call only if reachable
-        if api_reachable:
-            try:
-                proxy = get_proxy()
-                async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
-                    response = await client.post(
-                        f"{SOLVER_API}/solve-challenge",
-                        json={"siteurl": url, "timeout": 60},
-                        timeout=60,
-                    )
-                    if response.status_code == 200:
-                        result = response.json()
-            except Exception:
-                pass
-
-        # Step 4: Local Fallback (always fires if external API unreachable/failed)
+        # CRITICAL PERFORMANCE HOTFIX:
+        # Disable the heavy local Playwright fallback loop on Render's Free Tier.
+        # Spawning headless Chromium sequentially inside a throttled container
+        # guarantees a timeout crash.
         if not result:
-            from FZBypass.core.turnstile_solver import solve_challenge
-            local_result = await solve_challenge(url, timeout_ms=30000)
-            if local_result.success:
-                result = {
-                    "cookies": local_result.cookies,
-                    "user_agent": local_result.user_agent,
-                }
-                # Cache the results for 1 hour (3600 seconds) to bypass subsequent Turnstile loops
-                CF_COOKIE_CACHE["cookies"] = local_result.cookies
-                CF_COOKIE_CACHE["user_agent"] = local_result.user_agent
-                CF_COOKIE_CACHE["expires_at"] = current_time + 3600
-            else:
-                raise DDLException(f"Cloudflare bypass failed: {local_result.error}")
+            raise DDLException(
+                "Bypass infrastructure is temporarily saturated. Local browser fallback aborted "
+                "to prevent system resource exhaustion."
+            )
 
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0")
