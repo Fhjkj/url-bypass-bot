@@ -1,8 +1,10 @@
 """Handler for javhdporn.net video URLs.
 
-Clicking .play-button navigates to stripchat.com which loads the HLS
-stream from doppiocdn.net. We intercept the master .m3u8 playlist URL
-the moment it appears in network traffic.
+Clicking .play-button triggers cast.js which decrypts data-mpu and
+creates a black.html iframe. The iframe gets banned for headless browsers,
+but before that happens, cast.js sends analytics calls to tesorf.com
+containing the real video ID (wid). We intercept the wid from the
+analytics traffic and construct the HLS URL directly.
 """
 import os
 import re
@@ -14,8 +16,6 @@ from FZBypass.core.exceptions import DDLException
 
 LOGGER = logging.getLogger(__name__)
 
-# Cache valid Cloudflare bypass credentials to eliminate duplicate
-# browser cycles on Render (saves CPU and reduces Solver API load).
 CF_COOKIE_CACHE = {
     "cookies": [],
     "user_agent": None,
@@ -24,13 +24,12 @@ CF_COOKIE_CACHE = {
 
 
 async def javhdporn(url: str) -> str:
-    """Extract HLS stream URL by clicking .play-button and intercepting network traffic."""
+    """Extract HLS stream URL by intercepting the wid from analytics traffic."""
     from playwright.async_api import async_playwright
     global CF_COOKIE_CACHE
 
     SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-edc7.up.railway.app")
 
-    # Proxy pool for hiding solver API calls (optional)
     proxy_pool = os.environ.get("BYPASS_PROXY_POOL", "")
     proxies = [p.strip() for p in proxy_pool.split(",") if p.strip()] if proxy_pool else []
 
@@ -42,14 +41,12 @@ async def javhdporn(url: str) -> str:
     result = None
     current_time = time.time()
 
-    # Step 1: Check if we have unexpired valid cookies cached in memory
     if CF_COOKIE_CACHE["cookies"] and current_time < CF_COOKIE_CACHE["expires_at"]:
         result = {
             "cookies": CF_COOKIE_CACHE["cookies"],
             "user_agent": CF_COOKIE_CACHE["user_agent"],
         }
     else:
-        # Step 2: Rapid external API call with short timeout
         try:
             proxy = get_proxy()
             async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
@@ -65,7 +62,6 @@ async def javhdporn(url: str) -> str:
         except httpx.RequestError:
             pass
 
-        # Step 3: Local Fallback - use Playwright to decrypt the data-mpu payload
         if not result:
             from FZBypass.core.turnstile_solver import solve_challenge
             local_result = await solve_challenge(url, timeout_ms=30000)
@@ -83,7 +79,6 @@ async def javhdporn(url: str) -> str:
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
-    # Step 4: Initialize Playwright Engine
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -100,29 +95,42 @@ async def javhdporn(url: str) -> str:
             user_agent=user_agent,
         )
 
-        # Insert Cloudflare authorization credentials
         if cookies:
             await context.add_cookies(cookies)
 
         page = await context.new_page()
 
-        # Intercept ALL network requests for .m3u8 URLs
-        hls_urls = []
-        mp4_urls = []
+        captured_wids = []
+        captured_streams = []
 
         def handle_request(req):
             try:
                 req_url = req.url
-                if '.m3u8' in req_url:
-                    if req_url not in hls_urls:
-                        hls_urls.append(req_url)
-                elif '.mp4' in req_url:
-                    if req_url not in mp4_urls:
-                        mp4_urls.append(req_url)
+                if '.m3u8' in req_url or '.mp4' in req_url:
+                    if req_url not in captured_streams:
+                        captured_streams.append(req_url)
+                # Capture wid from analytics calls
+                if 'tesorf.com' in req_url or 'nocrit.com' in req_url:
+                    m = re.search(r'[?&]wid=(\d+)', req_url)
+                    if m:
+                        wid = m.group(1)
+                        if wid not in captured_wids:
+                            captured_wids.append(wid)
             except Exception:
                 pass
 
-        page.on("request", handle_request)
+        async def handle_response(res):
+            try:
+                res_url = res.url
+                if "doppiocdn" in res_url.lower() or "edge-hls" in res_url.lower() or ".m3u8" in res_url.lower():
+                    if any(ext in res_url.lower() for ext in ['.m3u8', '.mp4']):
+                        if res_url not in captured_streams:
+                            captured_streams.append(res_url)
+            except Exception:
+                pass
+
+        context.on("request", handle_request)
+        context.on("response", handle_response)
 
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=35000)
@@ -130,9 +138,6 @@ async def javhdporn(url: str) -> str:
             await browser.close()
             raise DDLException(f"Browser navigation failed: {str(e)}")
 
-        # Step 5: Click .play-button to trigger navigation to stripchat.com
-        # This is the critical step - clicking play navigates to the streaming
-        # platform which then loads the HLS stream from doppiocdn.net
         try:
             play_btn = page.locator(".play-button").first
             if await play_btn.count() > 0:
@@ -141,7 +146,6 @@ async def javhdporn(url: str) -> str:
                     await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
                 else:
                     await play_btn.click(timeout=2000, force=True)
-                # Wait for navigation to complete (stripchat.com loads)
                 try:
                     await page.wait_for_load_state("domcontentloaded", timeout=15000)
                 except Exception:
@@ -149,7 +153,6 @@ async def javhdporn(url: str) -> str:
         except Exception as e:
             LOGGER.debug("Play button click error: %s", e)
 
-        # Also try clicking #video-player as fallback
         try:
             vp = page.locator("#video-player").first
             box = await vp.boundingBox()
@@ -158,18 +161,21 @@ async def javhdporn(url: str) -> str:
         except Exception:
             pass
 
-        # Step 6: Passive Monitoring Interval with Sequence Array Interception
-        # Wipes out SSAI 20-second dynamic ad wrappers completely
-        # Monitor the stream layout for up to 60 seconds to allow the ad
-        # token swap to finish (Render Free Tier is slow).
-        deadline = time.time() + 60
+        deadline = time.time() + 30
         final_video_url = None
         while time.time() < deadline:
             await page.wait_for_timeout(2000)
 
-            # Clean out obvious banner overlays and tracking pixels
+            # If we captured a wid, construct HLS URL directly
+            if captured_wids and not final_video_url:
+                wid = captured_wids[-1]
+                hls_url = f"https://media-hls.doppiocdn.net/b-hls-10/{wid}/{wid}.m3u8?playlistType=lowLatency&preferredVideoCodec=h264"
+                LOGGER.info("javhdporn: constructed HLS URL from wid=%s: %s", wid, hls_url)
+                final_video_url = hls_url
+                break
+
             clean_targets = [
-                u for u in hls_urls
+                u for u in captured_streams
                 if 'banner' not in u.lower()
                 and 'ping.m3u8' not in u.lower()
                 and '300x250' not in u.lower()
@@ -177,28 +183,18 @@ async def javhdporn(url: str) -> str:
             ]
 
             if clean_targets:
-                # Isolate the high-definition multi-bitrate master manifests
                 master_manifests = [u for u in clean_targets if 'master' in u.lower() or '_auto' in u.lower()]
-
-                # CRITICAL SELECTION LAYER:
-                # When the site runs without adblock, it injects the 20s ad manifest FIRST.
-                # Once the ad segment passes its buffer check, the player creates a SECOND distinct master URL.
-                # The second master link generated contains the actual full-length 1080p content.
                 if len(master_manifests) > 1:
-                    # Select the absolute latest manifest registered in the pipeline array
                     final_video_url = master_manifests[-1]
                     break
                 elif len(clean_targets) > 1:
-                    # Fallback if the manifest layout wraps files differently
                     final_video_url = clean_targets[-1]
                     break
                 else:
-                    # Temporary storage assignment if only one link has rendered so far
                     final_video_url = master_manifests[0] if master_manifests else clean_targets[0]
 
-        # Log what we captured for debugging
-        LOGGER.info("javhdporn: captured %d HLS URLs, %d MP4 URLs, final page: %s, final_url: %s",
-                     len(hls_urls), len(mp4_urls), page.url[:200], final_video_url or "none")
+        LOGGER.info("javhdporn: captured %d wids, %d stream URLs, final_url: %s",
+                     len(captured_wids), len(captured_streams), final_video_url or "none")
 
         await browser.close()
 
