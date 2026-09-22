@@ -84,23 +84,24 @@ async def javhdporn(url: str) -> str:
         await page.add_init_script("""
             window._capturedStreams = [];
             window._capturedUrls = [];
+            window._capturedVideos = [];
 
-            // Hook Base64 Decoder - capture only strings containing video URLs
+            // Hook Base64 Decoder - capture ALL decoded strings (we filter later)
             const originalAtob = window.atob;
             window.atob = function(str) {
                 try {
                     const decoded = originalAtob(str);
-                    if (decoded && (decoded.includes('.m3u8') || decoded.includes('.mp4') || decoded.includes('doppiocdn') || decoded.includes('edge-hls'))) {
+                    if (decoded && decoded.length > 10) {
                         window._capturedStreams.push(decoded);
                     }
                 } catch(e) {}
                 return originalAtob(str);
             };
 
-            // Hook JSON Parser
+            // Hook JSON Parser - capture ALL parsed strings
             const originalParse = JSON.parse;
             JSON.parse = function(text) {
-                if (text && (text.includes('.m3u8') || text.includes('.mp4') || text.includes('doppiocdn') || text.includes('edge-hls'))) {
+                if (text && text.length > 10) {
                     window._capturedStreams.push(text);
                 }
                 return originalParse(text);
@@ -109,9 +110,7 @@ async def javhdporn(url: str) -> str:
             // Hook XMLHttpRequest
             const origOpen = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function(method, url) {
-                if (url && (url.includes('.m3u8') || url.includes('.mp4') || url.includes('doppiocdn') || url.includes('edge-hls'))) {
-                    window._capturedUrls.push(url);
-                }
+                if (url) window._capturedUrls.push(url);
                 return origOpen.apply(this, arguments);
             };
 
@@ -120,9 +119,7 @@ async def javhdporn(url: str) -> str:
             window.fetch = function(url, opts) {
                 if (url) {
                     var u = typeof url === 'string' ? url : url.href || String(url);
-                    if (u.includes('.m3u8') || u.includes('.mp4') || u.includes('doppiocdn') || u.includes('edge-hls')) {
-                        window._capturedUrls.push(u);
-                    }
+                    window._capturedUrls.push(u);
                 }
                 return origFetch.apply(this, arguments);
             };
@@ -133,7 +130,8 @@ async def javhdporn(url: str) -> str:
             if (origSrc && origSrc.set) {
                 Object.defineProperty(videoProto, 'src', {
                     set: function(val) {
-                        if (val && (val.includes('.m3u8') || val.includes('.mp4') || val.includes('doppiocdn') || val.includes('edge-hls'))) {
+                        if (val) {
+                            window._capturedVideos.push(val);
                             window._capturedUrls.push(val);
                         }
                         return origSrc.set.call(this, val);
@@ -147,13 +145,18 @@ async def javhdporn(url: str) -> str:
             if (iframeSrc && iframeSrc.set) {
                 Object.defineProperty(iframeProto, 'src', {
                     set: function(val) {
-                        if (val && (val.includes('.m3u8') || val.includes('.mp4') || val.includes('doppiocdn') || val.includes('edge-hls'))) {
-                            window._capturedUrls.push(val);
-                        }
+                        if (val) window._capturedUrls.push(val);
                         return iframeSrc.set.call(this, val);
                     }
                 });
             }
+
+            // Hook video play() to catch when the main video starts playing
+            const origPlay = HTMLVideoElement.prototype.play;
+            HTMLVideoElement.prototype.play = function() {
+                if (this.src) window._capturedVideos.push(this.src);
+                return origPlay.apply(this, arguments);
+            };
         """)
 
         # Network listener as a fallback layer (sync handler to avoid event-loop blocking)
@@ -188,7 +191,7 @@ async def javhdporn(url: str) -> str:
         except:
             pass
 
-        # Step 5: Read the decrypted string right out of window memory
+# Step 5: Read the decrypted string right out of window memory
         for _ in range(3):
             await page.wait_for_timeout(1500)
             try:
@@ -205,6 +208,13 @@ async def javhdporn(url: str) -> str:
                 captured_urls = await page.evaluate("window._capturedUrls")
                 for u in captured_urls:
                     clean_url = u.replace("&amp;", "&")
+                    if clean_url not in video_urls:
+                        video_urls.append(clean_url)
+
+                # Pull captured video srcs
+                captured_videos = await page.evaluate("window._capturedVideos")
+                for v in captured_videos:
+                    clean_url = v.replace("&amp;", "&")
                     if clean_url not in video_urls:
                         video_urls.append(clean_url)
 
@@ -232,11 +242,10 @@ async def javhdporn(url: str) -> str:
 
         await browser.close()
 
-# Step 6: Advanced Media Inspection (Wipes out fake video ads completely)
+    # Step 6: Advanced Media Inspection (Wipes out fake video ads completely)
     clean_streams = []
 
     # Extract the target ID/code from the original request URL (e.g., "apak-095")
-    # This ensures the bot ONLY accepts links matching the requested content
     url_parts = url.lower().strip('/').split('/')
     target_code = url_parts[-1].replace('-decensored', '').replace('-uncensored', '')
 
@@ -247,13 +256,13 @@ async def javhdporn(url: str) -> str:
         if any(bad in url_lower for bad in ['banner', 'ping.m3u8', 'ads', 'pop', 'tracking', 'click', '300x250']):
             continue
 
-        # 2. TARGET IDENTIFIER VALIDATION: If the captured link contains an ID
-        # that doesn't match the requested movie asset (e.g. apak-094 vs apak-095), drop it!
-        # This completely filters out background preview loops from related videos.
-        # NOTE: HLS master playlists from the actual CDN use numeric IDs
+        # 2. TARGET IDENTIFIER VALIDATION: Only apply to MP4 URLs.
+        # HLS master playlists from the actual CDN use numeric IDs
         # (e.g. edge-hls.doppiocdn.net/hls/263546963/master/...) and don't
         # contain "apak-", so they pass through safely.
-        if "apak-" in url_lower and target_code not in url_lower:
+        # Related-video MP4s (e.g. video.pornfhd.com/v/censored/104521_APAK-094.mp4)
+        # contain a different video code and get filtered out.
+        if '.mp4' in url_lower and "apak-" in url_lower and target_code not in url_lower:
             continue
 
         if u not in clean_streams:
