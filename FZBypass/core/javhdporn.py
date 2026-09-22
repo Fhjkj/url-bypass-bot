@@ -45,24 +45,36 @@ async def javhdporn(url: str) -> str:
             "user_agent": CF_COOKIE_CACHE["user_agent"],
         }
     else:
-        # Step 2: Cache miss - attempt external API call
+        # Step 2: Quick health check on external Solver API (5s max)
+        api_reachable = False
         try:
             proxy = get_proxy()
             async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
-                response = await client.post(
-                    f"{SOLVER_API}/solve-challenge",
-                    json={"siteurl": url, "timeout": 60},
-                    timeout=120,
-                )
-                if response.status_code == 200:
-                    result = response.json()
+                health = await client.get(f"{SOLVER_API}/health", timeout=5)
+                if health.status_code == 200:
+                    api_reachable = True
         except Exception:
             pass
 
-        # Step 3: Local Fallback (only fires when cache miss and external API fails)
+        # Step 3: Attempt external API call only if reachable
+        if api_reachable:
+            try:
+                proxy = get_proxy()
+                async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
+                    response = await client.post(
+                        f"{SOLVER_API}/solve-challenge",
+                        json={"siteurl": url, "timeout": 60},
+                        timeout=60,
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+            except Exception:
+                pass
+
+        # Step 4: Local Fallback (always fires if external API unreachable/failed)
         if not result:
             from FZBypass.core.turnstile_solver import solve_challenge
-            local_result = await solve_challenge(url, timeout_ms=45000)
+            local_result = await solve_challenge(url, timeout_ms=30000)
             if local_result.success:
                 result = {
                     "cookies": local_result.cookies,
