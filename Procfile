@@ -1,1 +1,1 @@
-web: python proxy_service.py
+web: python bot.py
