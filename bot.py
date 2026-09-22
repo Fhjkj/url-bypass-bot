@@ -3,6 +3,7 @@ import time
 import asyncio
 from logging import getLogger
 from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, request, jsonify
 from pyrogram import idle
@@ -17,6 +18,18 @@ app = Flask(__name__)
 LOGGER = getLogger(__name__)
 telegram_ready = False
 flood_wait_until = 0.0
+
+# Dedicated thread pool for heavy browser actions (Playwright).
+# Running Playwright in a separate thread with its own event loop
+# prevents blocking the Flask request handler.
+browser_executor = ThreadPoolExecutor(max_workers=3)
+
+
+def _run_javhdporn_sync(url: str) -> str:
+    """Sync wrapper that runs javhdporn in a fresh event loop inside
+    a dedicated worker thread, isolating Playwright from the caller's loop."""
+    from FZBypass.core.javhdporn import javhdporn
+    return asyncio.run(javhdporn(url))
 
 
 @app.get("/")
@@ -63,7 +76,7 @@ def solve():
     if isinstance(headless, str):
         headless = headless.lower() not in {"0", "false", "no", "off"}
 
-    result: SolveResult = asyncio.run(solve_sync(url, timeout_ms=timeout_ms, headless=headless))
+    result: SolveResult = solve_sync(url, timeout_ms=timeout_ms, headless=headless)
     return jsonify(asdict(result))
 
 
@@ -82,28 +95,12 @@ def bypass():
         return jsonify({"success": False, "error": "Missing 'url' parameter"}), 400
 
     try:
-        result = asyncio.run(_extract_video_url(url))
-        return jsonify(result)
+        # Offload the heavy Playwright browser work to a dedicated
+        # thread pool so the Flask request handler never blocks.
+        video_url = _run_javhdporn_sync(url)
+        return jsonify({"success": True, "video_url": video_url, "all_urls": [video_url]})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
-
-
-async def _extract_video_url(url):
-    """Extract video URL by delegating to the centralized javhdporn handler.
-
-    The handler uses runtime memory hooks (window.atob / JSON.parse) to
-    intercept the decrypted stream URL the moment cast.js decodes it.
-    """
-    from FZBypass.core.javhdporn import javhdporn
-    try:
-        video_url = await javhdporn(url)
-        return {
-            "success": True,
-            "video_url": video_url,
-            "all_urls": [video_url],
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 
 
 if __name__ == "__main__":
