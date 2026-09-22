@@ -120,6 +120,66 @@ async def javhdporn(url: str) -> str:
 
         page.on("response", handle_response)
 
+        # RUNTIME MEMORY HOOKS: cast.js decrypts the data-mpu payload and
+        # assigns the result directly into JS variables / video.src without
+        # firing a network request. The response listener above would never
+        # see it. These hooks intercept the decrypted URL the moment it
+        # appears in memory.
+        await page.add_init_script("""
+            (() => {
+                const captured = [];
+                const targetExts = ['.m3u8', '.mp4', '.webm'];
+                const isTarget = (s) => typeof s === 'string' && targetExts.some(e => s.includes(e));
+
+                function record(url) {
+                    if (isTarget(url) && !captured.includes(url)) {
+                        captured.push(url);
+                    }
+                }
+
+                // Hook HTMLVideoElement.prototype.src setter
+                const origSrc = Object.getOwnPropertyDescriptor(HTMLVideoElement.prototype, 'src');
+                if (origSrc && origSrc.set) {
+                    Object.defineProperty(HTMLVideoElement.prototype, 'src', {
+                        set: function(v) { record(v); origSrc.set.call(this, v); },
+                        configurable: true,
+                    });
+                }
+
+                // Hook HTMLMediaElement.prototype.setAttribute for src
+                const origSetAttr = HTMLElement.prototype.setAttribute;
+                HTMLElement.prototype.setAttribute = function(name, value) {
+                    if (name.toLowerCase() === 'src') record(value);
+                    return origSetAttr.call(this, name, value);
+                };
+
+                // Hook window.atob (cast.js uses base64 decoding)
+                const origAtob = window.atob;
+                window.atob = function(s) {
+                    const out = origAtob(s);
+                    try { record(out); } catch(e) {}
+                    return out;
+                };
+
+                // Hook fetch
+                const origFetch = window.fetch;
+                window.fetch = function(...args) {
+                    if (args[0]) record(String(args[0]));
+                    return origFetch.apply(this, args);
+                };
+
+                // Hook XMLHttpRequest send
+                const origOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url) {
+                    record(String(url));
+                    return origOpen.apply(this, arguments);
+                };
+
+                // Expose captured list for later polling
+                window.__video_urls_captured = captured;
+            })();
+        """)
+
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=35000)
             # NOTE: Do NOT wait_for_selector here. Playwright's wait_for_selector
@@ -145,9 +205,23 @@ async def javhdporn(url: str) -> str:
                 pass
 
         # Step 6: Low-Overhead Idle Sleep
-        # Increased to 35 seconds to ensure the single-core CPU has time
-        # to process the decrypted stream request before the browser closes.
-        await page.wait_for_timeout(35000)
+        # Poll the runtime memory hooks every 2 seconds to capture the
+        # decrypted URL as soon as cast.js assigns it. The 35-second ceiling
+        # gives the single-core CPU plenty of time to run the decryption.
+        deadline = time.time() + 35
+        while time.time() < deadline:
+            try:
+                captured = await page.evaluate("() => window.__video_urls_captured || []")
+                for u in captured:
+                    if u not in video_urls:
+                        video_urls.append(u)
+            except Exception:
+                pass
+            # Early exit: stop waiting once we have a valid stream URL
+            if any('.m3u8' in u or ('.mp4' in u and 'doppiocdn' in u.lower()) for u in video_urls):
+                break
+            await page.wait_for_timeout(2000)
+
         await browser.close()
 
     # Step 6: SAFE FILTERING (Keeps the real video servers while discarding banners)
