@@ -236,6 +236,7 @@ async def javhdporn(url: str) -> str:
     clean_streams = []
 
     # Extract the target ID/code from the original request URL (e.g., "apak-095")
+    # This ensures the bot ONLY accepts links matching the requested content
     url_parts = url.lower().strip('/').split('/')
     target_code = url_parts[-1].replace('-decensored', '').replace('-uncensored', '')
 
@@ -246,13 +247,13 @@ async def javhdporn(url: str) -> str:
         if any(bad in url_lower for bad in ['banner', 'ping.m3u8', 'ads', 'pop', 'tracking', 'click', '300x250']):
             continue
 
-        # 2. TARGET IDENTIFIER VALIDATION: For MP4 URLs, if the captured link
-        # contains a different video code (e.g. apak-094 vs apak-095), drop it.
-        # This filters out related-video preview loops.
+        # 2. TARGET IDENTIFIER VALIDATION: If the captured link contains an ID
+        # that doesn't match the requested movie asset (e.g. apak-094 vs apak-095), drop it!
+        # This completely filters out background preview loops from related videos.
         # NOTE: HLS master playlists from the actual CDN use numeric IDs
-        # (e.g. edge-hls.doppiocdn.net/hls/263546963/master/...), so we
-        # must NOT apply the code check to those.
-        if '.mp4' in url_lower and "apak-" in url_lower and target_code not in url_lower:
+        # (e.g. edge-hls.doppiocdn.net/hls/263546963/master/...) and don't
+        # contain "apak-", so they pass through safely.
+        if "apak-" in url_lower and target_code not in url_lower:
             continue
 
         if u not in clean_streams:
