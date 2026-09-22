@@ -212,55 +212,33 @@ async def javhdporn(url: str) -> str:
             await browser.close()
             raise DDLException(f"Browser navigation timed out: {str(e)}")
 
-        # Step 4: Hard-trigger the underlying event hooks bound to _0x3fe11f
-        # This executes a broad structural mouse trigger inside the player container spaces
+        # Step 2: Force wait for the decryption placeholder to mount
         try:
-            await page.evaluate("""() => {
-                const players = document.querySelectorAll('#video-player, [data-mpu], .player-container, .play-button, .player');
-                players.forEach(p => {
-                    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
-                    const up = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
-                    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
-                    p.dispatchEvent(down);
-                    p.dispatchEvent(up);
-                    p.dispatchEvent(click);
-                });
-            }""")
+            await page.wait_for_selector("#video-player, [data-mpu]", timeout=10000)
         except:
             pass
 
-        # Step 5: Active Loop - Constantly monitor for the real asset
-        for _ in range(8):
-            await page.wait_for_timeout(2000)
-
-            # Pull captured URLs from injected hooks
+        # Step 3: Hard-trigger synthetic mouse coordinate dispatching
+        # Obfuscated files look for bounding coordinate flags to prevent generic scraping loops
+        try:
+            box = await page.locator("#video-player").first.bounding_box()
+            if box:
+                await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+        except:
             try:
-                memory_strings = await page.evaluate("window._capturedStreams")
-                for item in memory_strings:
-                    matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', item)
-                    for match in matches:
-                        clean_url = match.replace("&amp;", "&")
-                        if clean_url not in video_urls:
-                            video_urls.append(clean_url)
-
-                captured_urls = await page.evaluate("window._capturedUrls")
-                for u in captured_urls:
-                    clean_url = u.replace("&amp;", "&")
-                    if clean_url not in video_urls:
-                        video_urls.append(clean_url)
-
-                captured_videos = await page.evaluate("window._capturedVideos")
-                for v in captured_videos:
-                    clean_url = v.replace("&amp;", "&")
-                    if clean_url not in video_urls:
-                        video_urls.append(clean_url)
+                await page.click("#video-player", timeout=2000)
             except:
                 pass
+
+        # Step 4: Robust 30-Second Decryption Verification Loop
+        # Gives cast.js ample time to parse atob variables on the single core
+        for _ in range(15):
+            await page.wait_for_timeout(2000)
 
             for frame in page.frames:
                 try:
                     frame_html = await frame.content()
-                    # Capture any generated m3u8 or mp4 links immediately
+                    # Deep match for any freshly generated streaming targets post-decryption
                     matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', frame_html)
                     for match in matches:
                         clean_match = match.replace("&amp;", "&")
