@@ -513,6 +513,133 @@ async def javhdporn(url: str) -> str:
                 break
             await page.wait_for_timeout(2000)
 
+        # DIRECT IFRAME INJECTION: Use Playwright's frame API to inject hooks
+        # into child frames. This bypasses DOM cross-origin restrictions
+        # that prevent parent-page access to iframe.contentWindow.
+        try:
+            for frame in page.frames:
+                if frame is page.main_frame:
+                    continue
+                try:
+                    await frame.evaluate("""() => {
+                        if (window.__video_hooks_applied) return;
+                        window.__video_hooks_applied = true;
+                        const captured = window.__video_urls_captured || [];
+                        const isUrl = (s) => typeof s === 'string' && s.startsWith('http');
+                        const record = (url) => { if (isUrl(url) && !captured.includes(url)) captured.push(url); };
+
+                        // Hook postMessage
+                        const origPM = window.postMessage;
+                        window.postMessage = function(message, targetOrigin, transfer) {
+                            try {
+                                if (typeof message === 'string') record(message);
+                                else if (message && typeof message === 'object') {
+                                    const walk = (obj) => {
+                                        if (!obj || typeof obj !== 'object') return;
+                                        if (typeof obj === 'string') { record(obj); return; }
+                                        for (const key of Object.keys(obj)) {
+                                            const val = obj[key];
+                                            if (typeof val === 'string') record(val);
+                                            else walk(val);
+                                        }
+                                    };
+                                    walk(message);
+                                }
+                            } catch(e) {}
+                            return origPM.call(this, message, targetOrigin, transfer);
+                        };
+
+                        // Hook addEventListener for message events
+                        const origAdd = window.addEventListener;
+                        window.addEventListener = function(type, listener, options) {
+                            if (type === 'message') {
+                                const wrapped = function(e) {
+                                    try {
+                                        const data = e && e.data;
+                                        if (typeof data === 'string') record(data);
+                                        else if (data && typeof data === 'object') {
+                                            const walk = (obj) => {
+                                                if (!obj || typeof obj !== 'object') return;
+                                                if (typeof obj === 'string') { record(obj); return; }
+                                                for (const key of Object.keys(obj)) {
+                                                    const val = obj[key];
+                                                    if (typeof val === 'string') record(val);
+                                                    else walk(val);
+                                                }
+                                            };
+                                            walk(data);
+                                        }
+                                    } catch(e) {}
+                                    return listener.apply(this, arguments);
+                                };
+                                return origAdd.call(this, type, wrapped, options);
+                            }
+                            return origAdd.call(this, type, listener, options);
+                        };
+
+                        // Hook HTMLVideoElement src
+                        const origSrc = Object.getOwnPropertyDescriptor(HTMLVideoElement.prototype, 'src');
+                        if (origSrc && origSrc.set) {
+                            Object.defineProperty(HTMLVideoElement.prototype, 'src', {
+                                set: function(v) { record(v); origSrc.set.call(this, v); },
+                                configurable: true,
+                            });
+                        }
+
+                        // Hook atob
+                        const origAtob = window.atob;
+                        window.atob = function(s) {
+                            const out = origAtob(s);
+                            try { record(out); } catch(e) {}
+                            return out;
+                        };
+
+                        // Hook fetch
+                        const origFetch = window.fetch;
+                        window.fetch = function(...args) {
+                            if (args[0]) record(String(args[0]));
+                            return origFetch.apply(this, args);
+                        };
+
+                        // Hook XHR
+                        const origOpen = XMLHttpRequest.prototype.open;
+                        XMLHttpRequest.prototype.open = function(method, url) {
+                            record(String(url));
+                            return origOpen.apply(this, arguments);
+                        };
+
+                        window.__video_urls_captured = captured;
+                    }""")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Poll iframe frames for captured URLs
+        for _ in range(15):
+            try:
+                iframe_urls = await page.evaluate("""() => {
+                    const urls = [];
+                    const iframes = Array.from(document.querySelectorAll('iframe'));
+                    for (const iframe of iframes) {
+                        try {
+                            const win = iframe.contentWindow;
+                            if (win && win.__video_urls_captured) {
+                                for (const u of win.__video_urls_captured) urls.push(u);
+                            }
+                        } catch(e) {}
+                    }
+                    return urls;
+                }""")
+                for u in iframe_urls:
+                    if u not in video_urls:
+                        video_urls.append(u)
+            except Exception:
+                pass
+            if any(('.m3u8' in u or ('.mp4' in u and 'doppiocdn' in u.lower())) for u in video_urls):
+                break
+            await page.wait_for_timeout(2000)
+
         # BRUTE-FORCE DOM/SCRIPT SCAN: If the hooks didn't catch anything,
         # scan every script tag and DOM attribute for any URL containing
         # known video markers. cast.js may store the decrypted URL in an
