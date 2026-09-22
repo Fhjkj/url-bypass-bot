@@ -26,13 +26,14 @@ async def javhdporn(url: str) -> str:
         return None
 
     # Step 1: Solve Cloudflare to secure access cookies
-    proxy = get_proxy()
+    # Use proxy only if BYPASS_PROXY_POOL is explicitly set AND non-empty
+    proxy = get_proxy() if proxies else None
     async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
         try:
             response = await client.post(
                 f"{SOLVER_API}/solve-challenge",
                 json={"siteurl": url, "timeout": 60},
-                timeout=120
+                timeout=180
             )
             if response.status_code != 200:
                 raise DDLException(f"Cloudflare bypass dropped: Status {response.status_code}")
