@@ -411,6 +411,10 @@ async def javhdporn(url: str) -> str:
             pass
 
         # Step 5: Trigger synthetic mouse events to unpack the _0x3fe11f listener hooks
+        # Give cast.js a moment to load and initialize before clicking
+        await page.wait_for_timeout(3000)
+
+        # Click #video-player to trigger decryption
         try:
             box = await page.locator("#video-player").first.bounding_box()
             if box:
@@ -422,6 +426,24 @@ async def javhdporn(url: str) -> str:
                 await page.click("#video-player", timeout=1500, force=True)
             except:
                 pass
+
+        # Also click .play-button if present
+        try:
+            play_btn = page.locator(".play-button").first
+            if await play_btn.count() and await play_btn.is_visible(timeout=1000):
+                await play_btn.click(timeout=2000, force=True)
+        except:
+            pass
+
+        # Click inside the player iframe if present (cast.js posts to #playerifr)
+        try:
+            iframe = page.locator("iframe#playerifr, iframe[src*='player']").first
+            if await iframe.count() and await iframe.is_visible(timeout=1000):
+                box = await iframe.bounding_box()
+                if box:
+                    await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+        except:
+            pass
 
         # Step 6: Low-Overhead Idle Sleep
         # Poll the runtime memory hooks every 2 seconds to capture the
