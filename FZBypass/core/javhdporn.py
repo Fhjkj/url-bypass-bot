@@ -224,42 +224,41 @@ async def javhdporn(url: str) -> str:
 
         await browser.close()
 
-    # Step 6: Strict Filtering & Cleanup
-    # Blocklist of ad/tracker/related-video domains
-    AD_DOMAINS = (
-        'banner', 'ping.m3u8', 'ads/', 'pop', 'tracking',
-        'storagexhd', 'thumbnail', 'medium', 'thumb',
-        'pornfhd.com', 'jads.co', 'whitetrafsa', 'javhd-trk',
-        'doubleclick', 'googlesyndication', 'adserver',
-        'adsbygoogle', 'amazon-adsystem', 'aniview', 'jwp',
-        'vidverto', 'moopad', 'plugedge', 'exosrv', 'syndication',
-        'ad', 'pre-roll', 'mid-roll', 'post-roll',
-    )
+# Step 6: Advanced Media Inspection (Wipes out fake video ads completely)
+    clean_streams = []
 
-    clean_streams = [
-        u for u in video_urls
-        if not any(ad in u.lower() for ad in AD_DOMAINS)
-    ]
+    # Extract the target ID/code from the original request URL (e.g., "apak-095")
+    url_parts = url.lower().strip('/').split('/')
+    target_code = url_parts[-1].replace('-decensored', '').replace('-uncensored', '')
 
-    # Separate by type and domain priority
-    hls_urls = [u for u in clean_streams if '.m3u8' in u]
-    mp4_urls = [u for u in clean_streams if '.mp4' in u]
+    for u in video_urls:
+        url_lower = u.lower()
 
-    # Tier 1: HLS master/adaptive playlists from the actual video CDN
-    hls_master = [u for u in hls_urls if 'master' in u.lower() or '_auto' in u.lower()]
-    if hls_master:
-        return str(hls_master[0])
+        # 1. Drop standard tracking pixels and banner ad delivery networks
+        if any(bad in url_lower for bad in ['banner', 'ping.m3u8', 'ads', 'pop', 'tracking', 'click', '300x250']):
+            continue
 
-    # Tier 2: Any HLS stream
+        # 2. TARGET IDENTIFIER VALIDATION: For MP4 URLs, if the captured link
+        # contains a different video code (e.g. apak-094 vs apak-095), drop it.
+        # This filters out related-video preview loops.
+        # NOTE: HLS master playlists from the actual CDN use numeric IDs
+        # (e.g. edge-hls.doppiocdn.net/hls/263546963/master/...), so we
+        # must NOT apply the code check to those.
+        if '.mp4' in url_lower and "apak-" in url_lower and target_code not in url_lower:
+            continue
+
+        if u not in clean_streams:
+            clean_streams.append(u)
+
+    # Step 7: Sort the streams and prioritize high-definition master configurations
+    hls_urls = [u for u in clean_streams if 'master' in u.lower() or '_auto' in u.lower()]
+    if not hls_urls:
+        hls_urls = [u for u in clean_streams if '.m3u8' in u]
+    if not hls_urls:
+        hls_urls = [u for u in clean_streams if '.mp4' in u]
+
+    # Step 8: Return output
     if hls_urls:
         return str(hls_urls[0])
-
-    # Tier 3: MP4 from the actual video CDN (doppiocdn / edge-hls)
-    real_mp4 = [u for u in mp4_urls
-                if 'doppiocdn' in u.lower()
-                or 'edge-hls' in u.lower()
-                or 'doppicdn' in u.lower()]
-    if real_mp4:
-        return str(real_mp4[0])
-
-    raise DDLException("Page decoded securely, but no active streaming strings were released.")
+    else:
+        raise DDLException("Fake advertisement loops blocked, but the primary 1080p source asset failed to load.")
