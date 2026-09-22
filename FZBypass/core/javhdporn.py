@@ -196,9 +196,9 @@ async def javhdporn(url: str) -> str:
             pass
 
         # Step 5: Actively monitor for the decrypted targets inside nested frame elements
-        # Loop 8 times to capture the exact interval when the .m3u8 is decrypted
-        for _ in range(8):
-            await page.wait_for_timeout(2000)
+        # Loop 5 times to capture the exact interval when the .m3u8 is decrypted
+        for _ in range(5):
+            await page.wait_for_timeout(1500)
 
             # Pull captured URLs from injected hooks
             try:
@@ -224,21 +224,25 @@ async def javhdporn(url: str) -> str:
             except:
                 pass
 
-            # Scan all frames for streaming manifest lines generated after event dispatching
-            for frame in page.frames:
-                try:
-                    frame_html = await frame.content()
-                    matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', frame_html)
-                    for match in matches:
-                        clean_match = match.replace("&amp;", "&")
-                        if clean_match not in video_urls:
-                            video_urls.append(clean_match)
-                except:
-                    pass
-
             # Early exit if we already have a good HLS master stream
             if any('.m3u8' in u and ('master' in u.lower() or '_auto' in u.lower()) for u in video_urls):
                 break
+
+        # Fallback: scan all frames for streaming manifest lines (only if needed)
+        if not video_urls:
+            try:
+                for frame in page.frames:
+                    try:
+                        frame_html = await frame.content()
+                        matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', frame_html)
+                        for match in matches:
+                            clean_match = match.replace("&amp;", "&")
+                            if clean_match not in video_urls:
+                                video_urls.append(clean_match)
+                    except:
+                        pass
+            except:
+                pass
 
         await browser.close()
 
@@ -253,7 +257,9 @@ async def javhdporn(url: str) -> str:
         url_lower = u.lower()
 
         # 1. Drop standard tracking pixels and banner ad delivery networks
-        if any(bad in url_lower for bad in ['banner', 'ping.m3u8', 'ads', 'pop', 'tracking', 'click', '300x250']):
+        # NOTE: Use domain-specific checks, not broad keywords like 'click'
+        # or 'pop' which could match legitimate video URLs.
+        if any(bad in url_lower for bad in ['banner', 'ping.m3u8', 'adsbygoogle', 'doubleclick', 'googlesyndication', '300x250', '728x90']):
             continue
 
         # 2. TARGET IDENTIFIER VALIDATION: Only apply to MP4 URLs.
