@@ -1,7 +1,8 @@
 """Handler for javhdporn.net video URLs.
 
-Overrides global browser decoding hooks to grab the decrypted
-payload right out of cast.js memory before it wraps it inside the player.
+Clicking .play-button navigates to stripchat.com which loads the HLS
+stream from doppiocdn.net. We intercept the master .m3u8 playlist URL
+the moment it appears in network traffic.
 """
 import os
 import re
@@ -23,7 +24,7 @@ CF_COOKIE_CACHE = {
 
 
 async def javhdporn(url: str) -> str:
-    """Intercept client-side decryption routines directly in Playwright runtime memory."""
+    """Extract HLS stream URL by clicking .play-button and intercepting network traffic."""
     from playwright.async_api import async_playwright
     global CF_COOKIE_CACHE
 
@@ -80,9 +81,9 @@ async def javhdporn(url: str) -> str:
                 raise DDLException(f"Cloudflare bypass failed: {local_result.error}")
 
     cookies = result.get("cookies", [])
-    user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0")
+    user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
-    # Step 4: Initialize Playwright Engine with strict resource limits
+    # Step 4: Initialize Playwright Engine
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -91,11 +92,7 @@ async def javhdporn(url: str) -> str:
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--disable-gpu',
-                '--single-process',
-                '--no-zygote',
-                '--disable-extensions',
-                '--disable-software-rasterizer',
-                '--memory-limit=128',
+                '--disable-blink-features=AutomationControlled',
             ]
         )
         context = await browser.new_context(
@@ -108,645 +105,84 @@ async def javhdporn(url: str) -> str:
             await context.add_cookies(cookies)
 
         page = await context.new_page()
-        video_urls = []
 
-        # LIGHTWEIGHT EVENT LISTENER: Catches the link instantly in background network traffic
-        # This completely replaces the heavy frame.content() string parsing loops!
-        def handle_response(res):
+        # Intercept ALL network requests for .m3u8 URLs
+        hls_urls = []
+        mp4_urls = []
+
+        def handle_request(req):
             try:
-                res_url = res.url
-                if any(ext in res_url.lower() for ext in ['.m3u8', '.mp4']):
-                    if res_url not in video_urls:
-                        video_urls.append(res_url)
+                req_url = req.url
+                if '.m3u8' in req_url:
+                    if req_url not in hls_urls:
+                        hls_urls.append(req_url)
+                elif '.mp4' in req_url:
+                    if req_url not in mp4_urls:
+                        mp4_urls.append(req_url)
             except Exception:
                 pass
 
-        page.on("response", handle_response)
-
-        # Also capture ALL network response URLs (not just .m3u8/.mp4) so we
-        # can see what the player is actually requesting.
-        all_network_urls = []
-        def handle_response_all(res):
-            try:
-                u = res.url
-                if u not in all_network_urls:
-                    all_network_urls.append(u)
-            except Exception:
-                pass
-        page.on("response", handle_response_all)
-
-        # RUNTIME MEMORY HOOKS: cast.js decrypts the data-mpu payload and
-        # assigns the result directly into JS variables / video.src without
-        # firing a network request. The response listener above would never
-        # see it. These hooks intercept the decrypted URL the moment it
-        # appears in memory. We capture ALL strings (not just .m3u8/.mp4)
-        # because the decrypted URL may be a redirect or a different format.
-        await page.add_init_script("""
-            (() => {
-                const captured = [];
-                const isUrl = (s) => typeof s === 'string' && s.startsWith('http');
-
-                function record(url) {
-                    if (isUrl(url) && !captured.includes(url)) {
-                        captured.push(url);
-                    }
-                }
-
-                // Hook HTMLVideoElement.prototype.src setter
-                const origSrc = Object.getOwnPropertyDescriptor(HTMLVideoElement.prototype, 'src');
-                if (origSrc && origSrc.set) {
-                    Object.defineProperty(HTMLVideoElement.prototype, 'src', {
-                        set: function(v) { record(v); origSrc.set.call(this, v); },
-                        configurable: true,
-                    });
-                }
-
-                // Hook HTMLMediaElement.setAttribute for src
-                const origSetAttr = HTMLElement.prototype.setAttribute;
-                HTMLElement.prototype.setAttribute = function(name, value) {
-                    if (name.toLowerCase() === 'src') record(value);
-                    return origSetAttr.call(this, name, value);
-                };
-
-                // Hook window.atob (cast.js uses base64 decoding)
-                const origAtob = window.atob;
-                window.atob = function(s) {
-                    const out = origAtob(s);
-                    try { record(out); } catch(e) {}
-                    return out;
-                };
-
-                // Hook fetch
-                const origFetch = window.fetch;
-                window.fetch = function(...args) {
-                    if (args[0]) record(String(args[0]));
-                    return origFetch.apply(this, args);
-                };
-
-                // Hook XMLHttpRequest open
-                const origOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url) {
-                    record(String(url));
-                    return origOpen.apply(this, arguments);
-                };
-
-                // Hook video.play / video.srcObject
-                const origPlay = HTMLVideoElement.prototype.play;
-                HTMLVideoElement.prototype.play = function() {
-                    if (this.src) record(this.src);
-                    return origPlay.apply(this, arguments);
-                };
-
-                // Hook postMessage — cast.js sends the decrypted URL to
-                // #playerifr via postMessage, bypassing all DOM/property hooks.
-                const origPostMessage = window.postMessage;
-                window.postMessage = function(message, targetOrigin, transfer) {
-                    try {
-                        if (typeof message === 'string') record(message);
-                        else if (message && typeof message === 'object') {
-                            const walk = (obj) => {
-                                if (!obj || typeof obj !== 'object') return;
-                                if (typeof obj === 'string') { record(obj); return; }
-                                for (const key of Object.keys(obj)) {
-                                    const val = obj[key];
-                                    if (typeof val === 'string') record(val);
-                                    else walk(val);
-                                }
-                            };
-                            walk(message);
-                        }
-                    } catch(e) {}
-                    return origPostMessage.call(this, message, targetOrigin, transfer);
-                };
-
-                // Hook addEventListener to catch 'message' events from any origin
-                const origAddEventListener = window.addEventListener;
-                window.addEventListener = function(type, listener, options) {
-                    if (type === 'message') {
-                        const wrapped = function(e) {
-                            try {
-                                const data = e && e.data;
-                                if (typeof data === 'string') record(data);
-                                else if (data && typeof data === 'object') {
-                                    const walk = (obj) => {
-                                        if (!obj || typeof obj !== 'object') return;
-                                        if (typeof obj === 'string') { record(obj); return; }
-                                        for (const key of Object.keys(obj)) {
-                                            const val = obj[key];
-                                            if (typeof val === 'string') record(val);
-                                            else walk(val);
-                                        }
-                                    };
-                                    walk(data);
-                                }
-                            } catch(e) {}
-                            return listener.apply(this, arguments);
-                        };
-                        return origAddEventListener.call(this, type, wrapped, options);
-                    }
-                    return origAddEventListener.call(this, type, listener, options);
-                };
-
-                // Hook onmessage property
-                const origOnMessage = window.onmessage;
-                Object.defineProperty(window, 'onmessage', {
-                    set: function(v) {
-                        const self = this;
-                        this._onmessage = v;
-                        origAddEventListener.call(window, 'message', function(e) {
-                            try {
-                                const data = e && e.data;
-                                if (typeof data === 'string') record(data);
-                            } catch(e) {}
-                            if (typeof v === 'function') return v.call(self, e);
-                        });
-                    },
-                    get: function() { return this._onmessage; },
-                    configurable: true,
-                });
-
-                // Expose captured list for later polling
-                window.__video_urls_captured = captured;
-            })();
-        """)
+        page.on("request", handle_request)
 
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=35000)
-            # NOTE: Do NOT wait_for_selector here. Playwright's wait_for_selector
-            # with state="attached" can still time out even when the element is
-            # present (the call log proves #video-player is in the DOM with
-            # data-mpu populated). Proceeding directly to the click avoids the
-            # spurious timeout and lets cast.js decryption run.
         except Exception as e:
             await browser.close()
             raise DDLException(f"Browser navigation failed: {str(e)}")
 
-        # RE-INJECT HOOKS AFTER PAGE LOAD: Some sites load cast.js in a way
-        # that runs before add_init_script takes effect. Re-applying the
-        # hooks after navigation ensures they're active when decryption runs.
-        try:
-            await page.evaluate("""
-                (() => {
-                    if (window.__video_hooks_applied) return;
-                    window.__video_hooks_applied = true;
-                    const captured = window.__video_urls_captured || [];
-                    const isUrl = (s) => typeof s === 'string' && s.startsWith('http');
-
-                    function record(url) {
-                        if (isUrl(url) && !captured.includes(url)) {
-                            captured.push(url);
-                        }
-                    }
-
-                    const origSrc = Object.getOwnPropertyDescriptor(HTMLVideoElement.prototype, 'src');
-                    if (origSrc && origSrc.set) {
-                        Object.defineProperty(HTMLVideoElement.prototype, 'src', {
-                            set: function(v) { record(v); origSrc.set.call(this, v); },
-                            configurable: true,
-                        });
-                    }
-
-                    const origSetAttr = HTMLElement.prototype.setAttribute;
-                    HTMLElement.prototype.setAttribute = function(name, value) {
-                        if (name.toLowerCase() === 'src') record(value);
-                        return origSetAttr.call(this, name, value);
-                    };
-
-                    const origAtob = window.atob;
-                    window.atob = function(s) {
-                        const out = origAtob(s);
-                        try { record(out); } catch(e) {}
-                        return out;
-                    };
-
-                    const origFetch = window.fetch;
-                    window.fetch = function(...args) {
-                        if (args[0]) record(String(args[0]));
-                        return origFetch.apply(this, args);
-                    };
-
-                    const origOpen = XMLHttpRequest.prototype.open;
-                    XMLHttpRequest.prototype.open = function(method, url) {
-                        record(String(url));
-                        return origOpen.apply(this, arguments);
-                    };
-
-                    const origPlay = HTMLVideoElement.prototype.play;
-                    HTMLVideoElement.prototype.play = function() {
-                        if (this.src) record(this.src);
-                        return origPlay.apply(this, arguments);
-                    };
-
-                    // Hook postMessage — cast.js sends the decrypted URL to
-                    // #playerifr via postMessage, bypassing all DOM/property hooks.
-                    const origPostMessage = window.postMessage;
-                    window.postMessage = function(message, targetOrigin, transfer) {
-                        try {
-                            if (typeof message === 'string') record(message);
-                            else if (message && typeof message === 'object') {
-                                const walk = (obj) => {
-                                    if (!obj || typeof obj !== 'object') return;
-                                    if (typeof obj === 'string') { record(obj); return; }
-                                    for (const key of Object.keys(obj)) {
-                                        const val = obj[key];
-                                        if (typeof val === 'string') record(val);
-                                        else walk(val);
-                                    }
-                                };
-                                walk(message);
-                            }
-                        } catch(e) {}
-                        return origPostMessage.call(this, message, targetOrigin, transfer);
-                    };
-
-                    // Hook addEventListener to catch 'message' events from any origin
-                    const origAddEventListener = window.addEventListener;
-                    window.addEventListener = function(type, listener, options) {
-                        if (type === 'message') {
-                            const wrapped = function(e) {
-                                try {
-                                    const data = e && e.data;
-                                    if (typeof data === 'string') record(data);
-                                    else if (data && typeof data === 'object') {
-                                        const walk = (obj) => {
-                                            if (!obj || typeof obj !== 'object') return;
-                                            if (typeof obj === 'string') { record(obj); return; }
-                                            for (const key of Object.keys(obj)) {
-                                                const val = obj[key];
-                                                if (typeof val === 'string') record(val);
-                                                else walk(val);
-                                            }
-                                        };
-                                        walk(data);
-                                    }
-                                } catch(e) {}
-                                return listener.apply(this, arguments);
-                            };
-                            return origAddEventListener.call(this, type, wrapped, options);
-                        }
-                        return origAddEventListener.call(this, type, listener, options);
-                    };
-
-                    // Hook onmessage property
-                    Object.defineProperty(window, 'onmessage', {
-                        set: function(v) {
-                            const self = this;
-                            this._onmessage = v;
-                            origAddEventListener.call(window, 'message', function(e) {
-                                try {
-                                    const data = e && e.data;
-                                    if (typeof data === 'string') record(data);
-                                } catch(e) {}
-                                if (typeof v === 'function') return v.call(self, e);
-                            });
-                        },
-                        get: function() { return this._onmessage; },
-                        configurable: true,
-                    });
-
-                    window.__video_urls_captured = captured;
-                })();
-            """)
-        except Exception:
-            pass
-
-        # Step 5: Trigger synthetic mouse events to unpack the _0x3fe11f listener hooks
-        # Give cast.js a moment to load and initialize before clicking
-        await page.wait_for_timeout(3000)
-
-        # Click #video-player to trigger decryption
-        try:
-            box = await page.locator("#video-player").first.bounding_box()
-            if box:
-                await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
-            else:
-                await page.click("#video-player", timeout=1500, force=True)
-        except:
-            try:
-                await page.click("#video-player", timeout=1500, force=True)
-            except:
-                pass
-
-        # Also click .play-button if present
+        # Step 5: Click .play-button to trigger navigation to stripchat.com
+        # This is the critical step - clicking play navigates to the streaming
+        # platform which then loads the HLS stream from doppiocdn.net
         try:
             play_btn = page.locator(".play-button").first
-            if await play_btn.count() and await play_btn.is_visible(timeout=1000):
-                await play_btn.click(timeout=2000, force=True)
-        except:
-            pass
-
-        # Click inside the player iframe if present (cast.js posts to #playerifr)
-        try:
-            iframe = page.locator("iframe#playerifr, iframe[src*='player']").first
-            if await iframe.count() and await iframe.is_visible(timeout=1000):
-                box = await iframe.bounding_box()
+            if await play_btn.count() > 0:
+                box = await play_btn.boundingBox()
                 if box:
                     await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
-        except:
+                else:
+                    await play_btn.click(timeout=2000, force=True)
+        except Exception as e:
+            LOGGER.debug("Play button click error: %s", e)
+
+        # Also try clicking #video-player as fallback
+        try:
+            vp = page.locator("#video-player").first
+            box = await vp.boundingBox()
+            if box:
+                await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+        except Exception:
             pass
 
-        # Step 6: Low-Overhead Idle Sleep
-        # Poll the runtime memory hooks every 2 seconds to capture the
-        # decrypted URL as soon as cast.js assigns it. The 35-second ceiling
-        # gives the single-core CPU plenty of time to run the decryption.
-        deadline = time.time() + 35
+        # Step 6: Wait for HLS stream to load
+        # The play button click navigates to stripchat.com which loads
+        # the HLS stream. We poll for up to 30 seconds.
+        deadline = time.time() + 30
         while time.time() < deadline:
-            try:
-                captured = await page.evaluate("""() => {
-                    const urls = (window.__video_urls_captured || []).slice();
-                    const markers = ['.m3u8', '.mp4', 'doppiocdn', 'edge-hls'];
-                    const re = /https?:\\/\\/[^"'\\s<>]+/g;
-
-                    function scan(text) {
-                        if (!text) return;
-                        const matches = text.match(re) || [];
-                        for (const m of matches) {
-                            const lower = m.toLowerCase();
-                            if (markers.some(mk => lower.includes(mk)) && !urls.includes(m)) {
-                                urls.push(m);
-                            }
-                        }
-                    }
-
-                    // Scan iframe content documents
-                    const iframes = Array.from(document.querySelectorAll('iframe'));
-                    for (const iframe of iframes) {
-                        try {
-                            const doc = iframe.contentDocument;
-                            if (doc && doc.documentElement) {
-                                scan(doc.documentElement.outerHTML);
-                            }
-                        } catch(e) {}
-                    }
-
-                    // Scan all script tags
-                    const scripts = Array.from(document.querySelectorAll('script'));
-                    for (const s of scripts) scan(s.textContent || s.innerText);
-
-                    // Scan all global window properties for URL-like strings
-                    try {
-                        for (const key of Object.keys(window)) {
-                            try {
-                                const val = window[key];
-                                if (typeof val === 'string') scan(val);
-                                else if (val && typeof val === 'object') {
-                                    for (const k2 of Object.keys(val)) {
-                                        try {
-                                            const v2 = val[k2];
-                                            if (typeof v2 === 'string') scan(v2);
-                                        } catch(e) {}
-                                    }
-                                }
-                            } catch(e) {}
-                        }
-                    } catch(e) {}
-
-                    return urls;
-                }""")
-                for u in captured:
-                    if u not in video_urls:
-                        video_urls.append(u)
-            except Exception:
-                pass
-            # Early exit: stop waiting once we have a valid stream URL
-            if any(('.m3u8' in u or ('.mp4' in u and 'doppiocdn' in u.lower())) for u in video_urls):
+            # Check if we have a master playlist URL
+            master_urls = [u for u in hls_urls if 'master' in u.lower() or '_auto' in u.lower()]
+            if master_urls:
                 break
-            await page.wait_for_timeout(2000)
-
-        # DIRECT IFRAME INJECTION: Use Playwright's frame API to inject hooks
-        # into child frames. This bypasses DOM cross-origin restrictions
-        # that prevent parent-page access to iframe.contentWindow.
-        try:
-            for frame in page.frames:
-                if frame is page.main_frame:
-                    continue
-                try:
-                    await frame.evaluate("""() => {
-                        if (window.__video_hooks_applied) return;
-                        window.__video_hooks_applied = true;
-                        const captured = window.__video_urls_captured || [];
-                        const isUrl = (s) => typeof s === 'string' && s.startsWith('http');
-                        const record = (url) => { if (isUrl(url) && !captured.includes(url)) captured.push(url); };
-
-                        // Hook postMessage
-                        const origPM = window.postMessage;
-                        window.postMessage = function(message, targetOrigin, transfer) {
-                            try {
-                                if (typeof message === 'string') record(message);
-                                else if (message && typeof message === 'object') {
-                                    const walk = (obj) => {
-                                        if (!obj || typeof obj !== 'object') return;
-                                        if (typeof obj === 'string') { record(obj); return; }
-                                        for (const key of Object.keys(obj)) {
-                                            const val = obj[key];
-                                            if (typeof val === 'string') record(val);
-                                            else walk(val);
-                                        }
-                                    };
-                                    walk(message);
-                                }
-                            } catch(e) {}
-                            return origPM.call(this, message, targetOrigin, transfer);
-                        };
-
-                        // Hook addEventListener for message events
-                        const origAdd = window.addEventListener;
-                        window.addEventListener = function(type, listener, options) {
-                            if (type === 'message') {
-                                const wrapped = function(e) {
-                                    try {
-                                        const data = e && e.data;
-                                        if (typeof data === 'string') record(data);
-                                        else if (data && typeof data === 'object') {
-                                            const walk = (obj) => {
-                                                if (!obj || typeof obj !== 'object') return;
-                                                if (typeof obj === 'string') { record(obj); return; }
-                                                for (const key of Object.keys(obj)) {
-                                                    const val = obj[key];
-                                                    if (typeof val === 'string') record(val);
-                                                    else walk(val);
-                                                }
-                                            };
-                                            walk(data);
-                                        }
-                                    } catch(e) {}
-                                    return listener.apply(this, arguments);
-                                };
-                                return origAdd.call(this, type, wrapped, options);
-                            }
-                            return origAdd.call(this, type, listener, options);
-                        };
-
-                        // Hook HTMLVideoElement src
-                        const origSrc = Object.getOwnPropertyDescriptor(HTMLVideoElement.prototype, 'src');
-                        if (origSrc && origSrc.set) {
-                            Object.defineProperty(HTMLVideoElement.prototype, 'src', {
-                                set: function(v) { record(v); origSrc.set.call(this, v); },
-                                configurable: true,
-                            });
-                        }
-
-                        // Hook atob
-                        const origAtob = window.atob;
-                        window.atob = function(s) {
-                            const out = origAtob(s);
-                            try { record(out); } catch(e) {}
-                            return out;
-                        };
-
-                        // Hook fetch
-                        const origFetch = window.fetch;
-                        window.fetch = function(...args) {
-                            if (args[0]) record(String(args[0]));
-                            return origFetch.apply(this, args);
-                        };
-
-                        // Hook XHR
-                        const origOpen = XMLHttpRequest.prototype.open;
-                        XMLHttpRequest.prototype.open = function(method, url) {
-                            record(String(url));
-                            return origOpen.apply(this, arguments);
-                        };
-
-                        window.__video_urls_captured = captured;
-                    }""")
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        # Poll iframe frames for captured URLs
-        for _ in range(15):
-            try:
-                iframe_urls = await page.evaluate("""() => {
-                    const urls = [];
-                    const iframes = Array.from(document.querySelectorAll('iframe'));
-                    for (const iframe of iframes) {
-                        try {
-                            const win = iframe.contentWindow;
-                            if (win && win.__video_urls_captured) {
-                                for (const u of win.__video_urls_captured) urls.push(u);
-                            }
-                        } catch(e) {}
-                    }
-                    return urls;
-                }""")
-                for u in iframe_urls:
-                    if u not in video_urls:
-                        video_urls.append(u)
-            except Exception:
-                pass
-            if any(('.m3u8' in u or ('.mp4' in u and 'doppiocdn' in u.lower())) for u in video_urls):
-                break
-            await page.wait_for_timeout(2000)
-
-        # BRUTE-FORCE DOM/SCRIPT SCAN: If the hooks didn't catch anything,
-        # scan every script tag and DOM attribute for any URL containing
-        # known video markers. cast.js may store the decrypted URL in an
-        # obfuscated variable or set it via HLS.js / MediaSource API.
-        try:
-            dom_urls = await page.evaluate("""() => {
-                const found = [];
-                const markers = ['.m3u8', '.mp4', '.webm', 'doppiocdn', 'edge-hls', 'hls'];
-                const re = /https?:\\/\\/[^"'\\s<>]+/g;
-
-                function scan(text) {
-                    if (!text) return;
-                    const matches = text.match(re) || [];
-                    for (const m of matches) {
-                        const lower = m.toLowerCase();
-                        if (markers.some(mk => lower.includes(mk)) && !found.includes(m)) {
-                            found.push(m);
-                        }
-                    }
-                }
-
-                // Scan all script tags (inline + external)
-                const scripts = Array.from(document.querySelectorAll('script'));
-                for (const s of scripts) {
-                    if (s.src) scan(s.src);
-                    scan(s.textContent || s.innerText);
-                }
-
-                // Scan all elements' attributes
-                const all = Array.from(document.querySelectorAll('*'));
-                for (const el of all) {
-                    const attrs = el.attributes || [];
-                    for (const a of attrs) scan(a.value);
-                    // Also check text content of likely containers
-                    if (el.tagName === 'VIDEO' || el.tagName === 'SOURCE') {
-                        scan(el.textContent || el.outerHTML);
-                    }
-                }
-
-                // Scan all iframes — cast.js posts the decrypted URL to
-                // #playerifr via postMessage; the URL lives inside the
-                // iframe's document, not the parent page.
-                const iframes = Array.from(document.querySelectorAll('iframe'));
-                for (const iframe of iframes) {
-                    try {
-                        const doc = iframe.contentDocument;
-                        if (doc) scan(doc.documentElement ? doc.documentElement.outerHTML : '');
-                        const iframeScripts = Array.from(doc.querySelectorAll('script'));
-                        for (const s of iframeScripts) scan(s.textContent || s.innerText);
-                    } catch(e) {
-                        // CORS-blocked iframes — try src attribute instead
-                        if (iframe.src) scan(iframe.src);
-                    }
-                }
-
-                // Scan the whole body text as a last resort
-                scan(document.body ? document.body.outerHTML : '');
-
-                return found;
-            }""")
-            for u in dom_urls:
-                if u not in video_urls:
-                    video_urls.append(u)
-        except Exception:
-            pass
-
-        # Merge in any network URLs we captured (for diagnostics)
-        for u in all_network_urls:
-            if u not in video_urls:
-                video_urls.append(u)
+            await page.wait_for_timeout(1000)
 
         await browser.close()
 
-    # Step 6: SAFE FILTERING (Keeps the real video servers while discarding banners)
-    clean_streams = []
+    # Step 7: Filter and prioritize
+    # Remove ad/tracker ping URLs
+    clean_hls = [u for u in hls_urls if 'ping.m3u8' not in u.lower()]
 
-    url_parts = url.lower().strip('/').split('/')
-    target_code = url_parts[-1].replace('-decensored', '').replace('-uncensored', '')  # e.g. "apak-095"
+    # Prioritize master playlists (contain 'master' or '_auto')
+    master_urls = [u for u in clean_hls if 'master' in u.lower() or '_auto' in u.lower()]
 
-    for u in video_urls:
-        url_lower = u.lower()
+    if master_urls:
+        return master_urls[0]
 
-        # FIXED: Removed generic 'ads' block string which was breaking the player tracking layer
-        if any(bad in url_lower for bad in ['banner', 'ping.m3u8', '300x250', '728x90', 'tracking', 'click', 'popup']):
-            continue
+    # Fallback: any HLS URL
+    if clean_hls:
+        return clean_hls[0]
 
-        # Target matching: If it is an ad preview loop of an old variant, drop it
-        if "apak-" in url_lower and target_code not in url_lower:
-            continue
+    # Last resort: any MP4 from doppiocdn
+    clean_mp4 = [u for u in mp4_urls if 'doppiocdn' in u.lower() and 'banner' not in u.lower()]
+    if clean_mp4:
+        return clean_mp4[0]
 
-        if u not in clean_streams:
-            clean_streams.append(u)
-
-    # Step 7: Direct prioritization loop
-    # Filter for the real HLS Master manifest links
-    hls_urls = [u for u in clean_streams if '.m3u8' in u]
-
-    # If no HLS manifests captured, look for the unthrottled storage delivery streams
-    if not hls_urls:
-        hls_urls = [u for u in clean_streams if 'storagexhd' in u.lower() and '.mp4' in u]
-
-    # Step 8: Output string conversion
-    if hls_urls and len(hls_urls) > 0:
-        return hls_urls[0]  # Grab the top clean asset path string
-    else:
-        # Debug dump: show what we actually captured so we can diagnose
-        # why filtering dropped everything.
-        from FZBypass import LOGGER
-        LOGGER.warning("javhdporn: captured %d raw URLs: %s", len(video_urls), video_urls[:20])
-        raise DDLException("Ad-filter verified, but the primary movie asset engine did not respond in time.")
+    raise DDLException("Security gate cleared, but the network layer did not catch the stream request context.")
