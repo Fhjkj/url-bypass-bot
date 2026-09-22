@@ -24,7 +24,7 @@ async def javhdporn(url: str) -> str:
     from playwright.async_api import async_playwright
     global CF_COOKIE_CACHE
 
-    SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7e59.up.railway.app")
+    SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-edc7.up.railway.app")
 
     # Proxy pool for hiding solver API calls (optional)
     proxy_pool = os.environ.get("BYPASS_PROXY_POOL", "")
