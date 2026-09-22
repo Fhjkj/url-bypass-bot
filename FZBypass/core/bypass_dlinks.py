@@ -68,6 +68,11 @@ async def filepress(url: str):
 
 
 async def gdtot(url):
+    # CRITICAL FIX: If the URL is already a decrypted media stream, return it
+    # immediately instead of trying to decrypt it as a gdtot link.
+    if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.webm', '.mp3', '.ts']):
+        return url
+
     cget = create_scraper().request
     try:
         url = cget("GET", url).url
@@ -120,6 +125,11 @@ async def gdtot(url):
 
 
 async def drivescript(url, crypt, dtype):
+    # CRITICAL FIX: If the URL is already a decrypted media stream, return it
+    # immediately instead of trying to decrypt it as a drive link.
+    if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.webm', '.mp3', '.ts']):
+        return url
+
     rs = Session()
     resp = rs.get(url)
     title = findall(r">(.*?)<\/h4>", resp.text)[0]
@@ -233,6 +243,11 @@ async def appflix(url):
 
 
 async def sharerpw(url: str, force=False):
+    # CRITICAL FIX: If the URL is already a decrypted media stream, return it
+    # immediately instead of trying to decrypt it as a share-link.
+    if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.webm', '.mp3', '.ts']):
+        return url
+
     if not Config.XSRF_TOKEN and not Config.LARAVEL_SESSION:
         raise DDLException("XSRF_TOKEN or LARAVEL_SESSION not Provided!")
     cget = create_scraper(allow_brotli=False).request
@@ -276,6 +291,12 @@ async def sharerpw(url: str, force=False):
 
 
 async def sharer_scraper(url):
+    # CRITICAL FIX: If the URL is already a decrypted media stream, return it
+    # immediately instead of trying to scrape it as a share-link (which raises
+    # "Download Link Key not found!").
+    if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.webm', '.mp3', '.ts']):
+        return url
+
     cget = create_scraper().request
     try:
         url = cget("GET", url).url

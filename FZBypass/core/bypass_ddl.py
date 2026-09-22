@@ -217,6 +217,11 @@ async def mdisk(url: str) -> str:
 
 
 async def transcript(url: str, DOMAIN: str, ref: str, sltime) -> str:
+    # CRITICAL FIX: If the URL is already a decrypted media stream, return it
+    # immediately instead of trying to scrape it as a short-link.
+    if any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.webm', '.mp3', '.ts']):
+        return url
+
     code = url.rstrip("/").split("/")[-1]
     useragent = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
 
