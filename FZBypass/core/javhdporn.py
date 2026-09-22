@@ -5,7 +5,6 @@ payload right out of cast.js memory before it wraps it inside the player.
 """
 import os
 import re
-import random
 import httpx
 from FZBypass.core.exceptions import DDLException
 
@@ -16,34 +15,32 @@ async def javhdporn(url: str) -> str:
 
     SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7e59.up.railway.app")
 
-    # Proxy pool for hiding solver API calls (use if Render IP gets blocked)
-    proxy_pool = os.environ.get("BYPASS_PROXY_POOL", "")
-    proxies = [p.strip() for p in proxy_pool.split(",") if p.strip()] if proxy_pool else []
-
-    def get_proxy():
-        if proxies:
-            return random.choice(proxies)
-        return None
-
     # Step 1: Solve Cloudflare to secure access cookies
-    # Use proxy only if BYPASS_PROXY_POOL is explicitly set AND non-empty
-    proxy = get_proxy() if proxies else None
-    async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
-        try:
+    # Try the external Solver API first; fall back to local Playwright solver if it fails
+    result = None
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, verify=False) as client:
             response = await client.post(
                 f"{SOLVER_API}/solve-challenge",
                 json={"siteurl": url, "timeout": 60},
-                timeout=180
+                timeout=120
             )
-            if response.status_code != 200:
-                raise DDLException(f"Cloudflare bypass dropped: Status {response.status_code}")
-            result = response.json()
-        except httpx.ConnectError as e:
-            raise DDLException(f"Cannot connect to Solver API: {str(e)}")
-        except httpx.TimeoutException as e:
-            raise DDLException(f"Solver API timeout: {str(e)}")
-        except Exception as e:
-            raise DDLException(f"Bypass handshake crashed: {type(e).__name__}: {str(e)}")
+            if response.status_code == 200:
+                result = response.json()
+    except Exception:
+        pass
+
+    # Fallback: use the local Playwright-based Turnstile solver
+    if not result:
+        from FZBypass.core.turnstile_solver import solve_sync
+        local_result = solve_sync(url, timeout_ms=45000, headless=True)
+        if local_result.success:
+            result = {
+                "cookies": local_result.cookies,
+                "user_agent": local_result.user_agent,
+            }
+        else:
+            raise DDLException(f"Cloudflare bypass failed: {local_result.error}")
 
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0")
