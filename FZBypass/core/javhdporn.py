@@ -142,9 +142,9 @@ async def javhdporn(url: str) -> str:
                 pass
 
         # Step 6: Low-Overhead Idle Sleep
-        # Because the background response listener handles the work, the main thread can rest.
-        # This allows cast.js to decrypt the data-mpu block smoothly on Render's single core.
-        await page.wait_for_timeout(15000)
+        # Increased to 35 seconds to ensure the single-core CPU has time
+        # to process the decrypted stream request before the browser closes.
+        await page.wait_for_timeout(35000)
         await browser.close()
 
     # Step 6: SAFE FILTERING (Keeps the real video servers while discarding banners)
