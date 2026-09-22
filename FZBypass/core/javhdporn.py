@@ -225,13 +225,20 @@ async def javhdporn(url: str) -> str:
         await browser.close()
 
     # Step 6: Strict Filtering & Cleanup
-    # Remove obvious ad/tracker noise
+    # Blocklist of ad/tracker/related-video domains
+    AD_DOMAINS = (
+        'banner', 'ping.m3u8', 'ads/', 'pop', 'tracking',
+        'storagexhd', 'thumbnail', 'medium', 'thumb',
+        'pornfhd.com', 'jads.co', 'whitetrafsa', 'javhd-trk',
+        'doubleclick', 'googlesyndication', 'adserver',
+        'adsbygoogle', 'amazon-adsystem', 'aniview', 'jwp',
+        'vidverto', 'moopad', 'plugedge', 'exosrv', 'syndication',
+        'ad', 'pre-roll', 'mid-roll', 'post-roll',
+    )
+
     clean_streams = [
         u for u in video_urls
-        if 'banner' not in u.lower()
-        and 'ping.m3u8' not in u.lower()
-        and 'ads/' not in u.lower()
-        and 'pop' not in u.lower()
+        if not any(ad in u.lower() for ad in AD_DOMAINS)
     ]
 
     # Separate by type and domain priority
@@ -248,22 +255,11 @@ async def javhdporn(url: str) -> str:
         return str(hls_urls[0])
 
     # Tier 3: MP4 from the actual video CDN (doppiocdn / edge-hls)
-    # Exclude related-video MP4s from pornfhd.com / storagexhd
     real_mp4 = [u for u in mp4_urls
                 if 'doppiocdn' in u.lower()
                 or 'edge-hls' in u.lower()
                 or 'doppicdn' in u.lower()]
     if real_mp4:
         return str(real_mp4[0])
-
-    # Tier 4: Any MP4 that isn't obviously a related video thumbnail
-    non_related = [u for u in mp4_urls
-                   if 'pornfhd.com' not in u.lower()
-                   and 'storagexhd' not in u.lower()
-                   and 'thumbnail' not in u.lower()
-                   and 'medium' not in u.lower()
-                   and 'thumb' not in u.lower()]
-    if non_related:
-        return str(non_related[0])
 
     raise DDLException("Page decoded securely, but no active streaming strings were released.")
