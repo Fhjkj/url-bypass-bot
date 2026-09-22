@@ -306,6 +306,56 @@ async def javhdporn(url: str) -> str:
                 break
             await page.wait_for_timeout(2000)
 
+        # BRUTE-FORCE DOM/SCRIPT SCAN: If the hooks didn't catch anything,
+        # scan every script tag and DOM attribute for any URL containing
+        # known video markers. cast.js may store the decrypted URL in an
+        # obfuscated variable or set it via HLS.js / MediaSource API.
+        try:
+            dom_urls = await page.evaluate("""() => {
+                const found = [];
+                const markers = ['.m3u8', '.mp4', '.webm', 'doppiocdn', 'edge-hls', 'hls'];
+                const re = /https?:\\/\\/[^"'\\s<>]+/g;
+
+                function scan(text) {
+                    if (!text) return;
+                    const matches = text.match(re) || [];
+                    for (const m of matches) {
+                        const lower = m.toLowerCase();
+                        if (markers.some(mk => lower.includes(mk)) && !found.includes(m)) {
+                            found.push(m);
+                        }
+                    }
+                }
+
+                // Scan all script tags (inline + external)
+                const scripts = Array.from(document.querySelectorAll('script'));
+                for (const s of scripts) {
+                    if (s.src) scan(s.src);
+                    scan(s.textContent || s.innerText);
+                }
+
+                // Scan all elements' attributes
+                const all = Array.from(document.querySelectorAll('*'));
+                for (const el of all) {
+                    const attrs = el.attributes || [];
+                    for (const a of attrs) scan(a.value);
+                    // Also check text content of likely containers
+                    if (el.tagName === 'VIDEO' || el.tagName === 'SOURCE') {
+                        scan(el.textContent || el.outerHTML);
+                    }
+                }
+
+                // Scan the whole body text as a last resort
+                scan(document.body ? document.body.outerHTML : '');
+
+                return found;
+            }""")
+            for u in dom_urls:
+                if u not in video_urls:
+                    video_urls.append(u)
+        except Exception:
+            pass
+
         # Merge in any network URLs we captured (for diagnostics)
         for u in all_network_urls:
             if u not in video_urls:
