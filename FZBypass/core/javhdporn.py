@@ -6,13 +6,23 @@ payload right out of cast.js memory before it wraps it inside the player.
 import os
 import re
 import random
+import time
 import httpx
 from FZBypass.core.exceptions import DDLException
+
+# Cache valid Cloudflare bypass credentials to eliminate duplicate
+# browser cycles on Render (saves CPU and reduces Solver API load).
+CF_COOKIE_CACHE = {
+    "cookies": [],
+    "user_agent": None,
+    "expires_at": 0,
+}
 
 
 async def javhdporn(url: str) -> str:
     """Intercept client-side decryption routines directly in Playwright runtime memory."""
     from playwright.async_api import async_playwright
+    global CF_COOKIE_CACHE
 
     SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7e59.up.railway.app")
 
@@ -25,34 +35,45 @@ async def javhdporn(url: str) -> str:
             return random.choice(proxies)
         return None
 
-    # Step 1: Solve Cloudflare to secure access cookies
-    # Try the external Solver API first (with proxy if configured);
-    # fall back to local Playwright solver if it fails/times out.
     result = None
-    try:
-        proxy = get_proxy()
-        async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
-            response = await client.post(
-                f"{SOLVER_API}/solve-challenge",
-                json={"siteurl": url, "timeout": 60},
-                timeout=120
-            )
-            if response.status_code == 200:
-                result = response.json()
-    except Exception:
-        pass
+    current_time = time.time()
 
-    # Fallback: use the local Playwright-based Turnstile solver (async version)
-    if not result:
-        from FZBypass.core.turnstile_solver import solve_challenge
-        local_result = await solve_challenge(url, timeout_ms=45000)
-        if local_result.success:
-            result = {
-                "cookies": local_result.cookies,
-                "user_agent": local_result.user_agent,
-            }
-        else:
-            raise DDLException(f"Cloudflare bypass failed: {local_result.error}")
+    # Step 1: Check if we have unexpired valid cookies cached in memory
+    if CF_COOKIE_CACHE["cookies"] and current_time < CF_COOKIE_CACHE["expires_at"]:
+        result = {
+            "cookies": CF_COOKIE_CACHE["cookies"],
+            "user_agent": CF_COOKIE_CACHE["user_agent"],
+        }
+    else:
+        # Step 2: Cache miss - attempt external API call
+        try:
+            proxy = get_proxy()
+            async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
+                response = await client.post(
+                    f"{SOLVER_API}/solve-challenge",
+                    json={"siteurl": url, "timeout": 60},
+                    timeout=120,
+                )
+                if response.status_code == 200:
+                    result = response.json()
+        except Exception:
+            pass
+
+        # Step 3: Local Fallback (only fires when cache miss and external API fails)
+        if not result:
+            from FZBypass.core.turnstile_solver import solve_challenge
+            local_result = await solve_challenge(url, timeout_ms=45000)
+            if local_result.success:
+                result = {
+                    "cookies": local_result.cookies,
+                    "user_agent": local_result.user_agent,
+                }
+                # Cache the results for 1 hour (3600 seconds) to bypass subsequent Turnstile loops
+                CF_COOKIE_CACHE["cookies"] = local_result.cookies
+                CF_COOKIE_CACHE["user_agent"] = local_result.user_agent
+                CF_COOKIE_CACHE["expires_at"] = current_time + 3600
+            else:
+                raise DDLException(f"Cloudflare bypass failed: {local_result.error}")
 
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0")
