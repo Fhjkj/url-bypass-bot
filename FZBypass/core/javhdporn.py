@@ -158,89 +158,51 @@ async def javhdporn(url: str) -> str:
         except Exception:
             pass
 
-        # Step 6: Wait for HLS stream to load
-        # Stripchat loads a 20-second ad first, then the actual video stream.
-        # We need to wait for the second HLS URL (the real video) to appear.
-        # Poll for up to 60 seconds to allow the ad to finish and the real
-        # stream to start.
+        # Step 6: Passive Monitoring Interval with Sequence Array Interception
+        # Wipes out SSAI 20-second dynamic ad wrappers completely
+        # Monitor the stream layout for up to 60 seconds to allow the ad
+        # token swap to finish (Render Free Tier is slow).
         deadline = time.time() + 60
-        non_ad_hls_count = 0
+        final_video_url = None
         while time.time() < deadline:
-            # Check for non-ad master playlist URLs
-            ad_patterns = ['ad-', 'ads-', 'advertisement', 'pre-roll', 'mid-roll',
-                           'post-roll', 'banner', 'trailer', 'teaser', 'promo',
-                           'sponsor', 'adbreak', 'adload', 'adtag', 'adurl']
-            clean = [u for u in hls_urls
-                     if not any(p in u.lower() for p in ad_patterns)
-                     and 'ping.m3u8' not in u.lower()]
-            master = [u for u in clean if 'master' in u.lower() or '_auto' in u.lower()]
-            if master and len(hls_urls) >= 2:
-                break
-            if master:
-                # If we have a master URL and at least one other URL (the ad),
-                # wait a few more seconds for the real stream to fully load
-                non_ad_hls_count += 1
-                if non_ad_hls_count >= 3:
-                    break
             await page.wait_for_timeout(2000)
 
+            # Clean out obvious banner overlays and tracking pixels
+            clean_targets = [
+                u for u in hls_urls
+                if 'banner' not in u.lower()
+                and 'ping.m3u8' not in u.lower()
+                and '300x250' not in u.lower()
+                and '728x90' not in u.lower()
+            ]
+
+            if clean_targets:
+                # Isolate the high-definition multi-bitrate master manifests
+                master_manifests = [u for u in clean_targets if 'master' in u.lower() or '_auto' in u.lower()]
+
+                # CRITICAL SELECTION LAYER:
+                # When the site runs without adblock, it injects the 20s ad manifest FIRST.
+                # Once the ad segment passes its buffer check, the player creates a SECOND distinct master URL.
+                # The second master link generated contains the actual full-length 1080p content.
+                if len(master_manifests) > 1:
+                    # Select the absolute latest manifest registered in the pipeline array
+                    final_video_url = master_manifests[-1]
+                    break
+                elif len(clean_targets) > 1:
+                    # Fallback if the manifest layout wraps files differently
+                    final_video_url = clean_targets[-1]
+                    break
+                else:
+                    # Temporary storage assignment if only one link has rendered so far
+                    final_video_url = master_manifests[0] if master_manifests else clean_targets[0]
+
         # Log what we captured for debugging
-        LOGGER.info("javhdporn: captured %d HLS URLs, %d MP4 URLs, final page: %s",
-                     len(hls_urls), len(mp4_urls), page.url[:200])
+        LOGGER.info("javhdporn: captured %d HLS URLs, %d MP4 URLs, final page: %s, final_url: %s",
+                     len(hls_urls), len(mp4_urls), page.url[:200], final_video_url or "none")
 
         await browser.close()
 
-    # Step 7: Filter and prioritize
-    # Stripchat loads a 20-second ad first, then the actual video stream.
-    # We need to filter out ad URLs and prioritize the real video playlist.
-
-    # Ad-related URL patterns to exclude
-    ad_patterns = [
-        'ad-', 'ads-', 'advertisement', 'pre-roll', 'mid-roll', 'post-roll',
-        'banner', 'ping.m3u8', 'trailer', 'teaser', 'promo', 'sponsor',
-        'adbreak', 'adbreaks', 'adload', 'adtag', 'adurl',
-    ]
-
-    clean_hls = []
-    for u in hls_urls:
-        url_lower = u.lower()
-        # Skip ad URLs
-        if any(p in url_lower for p in ad_patterns):
-            continue
-        # Skip ping URLs
-        if 'ping.m3u8' in url_lower:
-            continue
-        clean_hls.append(u)
-
-    # Prioritize master playlists (contain 'master' or '_auto')
-    master_urls = [u for u in clean_hls if 'master' in u.lower() or '_auto' in u.lower()]
-
-    # If we have multiple master URLs, prefer the one with the highest
-    # video quality (1080p > 720p > 480p > 360p)
-    if len(master_urls) > 1:
-        def quality_score(url):
-            url_lower = url.lower()
-            if '1080p' in url_lower or '1080' in url_lower:
-                return 4
-            if '720p' in url_lower or '720' in url_lower:
-                return 3
-            if '480p' in url_lower or '480' in url_lower:
-                return 2
-            if '360p' in url_lower or '360' in url_lower:
-                return 1
-            return 0
-        master_urls.sort(key=quality_score, reverse=True)
-
-    if master_urls:
-        return master_urls[0]
-
-    # Fallback: any non-ad HLS URL
-    if clean_hls:
-        return clean_hls[0]
-
-    # Last resort: any MP4 from doppiocdn
-    clean_mp4 = [u for u in mp4_urls if 'doppiocdn' in u.lower() and 'banner' not in u.lower()]
-    if clean_mp4:
-        return clean_mp4[0]
+        if final_video_url:
+            return final_video_url
 
     raise DDLException("Security gate cleared, but the network layer did not catch the stream request context.")
