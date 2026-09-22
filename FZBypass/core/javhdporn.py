@@ -5,6 +5,7 @@ payload right out of cast.js memory before it wraps it inside the player.
 """
 import os
 import re
+import random
 import httpx
 from FZBypass.core.exceptions import DDLException
 
@@ -15,11 +16,22 @@ async def javhdporn(url: str) -> str:
 
     SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-7e59.up.railway.app")
 
+    # Proxy pool for hiding solver API calls (optional)
+    proxy_pool = os.environ.get("BYPASS_PROXY_POOL", "")
+    proxies = [p.strip() for p in proxy_pool.split(",") if p.strip()] if proxy_pool else []
+
+    def get_proxy():
+        if proxies:
+            return random.choice(proxies)
+        return None
+
     # Step 1: Solve Cloudflare to secure access cookies
-    # Try the external Solver API first; fall back to local Playwright solver if it fails
+    # Try the external Solver API first (with proxy if configured);
+    # fall back to local Playwright solver if it fails/times out.
     result = None
     try:
-        async with httpx.AsyncClient(follow_redirects=True, verify=False) as client:
+        proxy = get_proxy()
+        async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
             response = await client.post(
                 f"{SOLVER_API}/solve-challenge",
                 json={"siteurl": url, "timeout": 60},
