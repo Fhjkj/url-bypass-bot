@@ -122,11 +122,14 @@ async def javhdporn(url: str) -> str:
 
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=35000)
-            # Wait for the element to be attached (not necessarily visible)
-            await page.wait_for_selector("#video-player, [data-mpu]", state="attached", timeout=5000)
+            # NOTE: Do NOT wait_for_selector here. Playwright's wait_for_selector
+            # with state="attached" can still time out even when the element is
+            # present (the call log proves #video-player is in the DOM with
+            # data-mpu populated). Proceeding directly to the click avoids the
+            # spurious timeout and lets cast.js decryption run.
         except Exception as e:
             await browser.close()
-            raise DDLException(f"Browser navigation timed out: {str(e)}")
+            raise DDLException(f"Browser navigation failed: {str(e)}")
 
         # Step 5: Trigger synthetic mouse events to unpack the _0x3fe11f listener hooks
         try:
