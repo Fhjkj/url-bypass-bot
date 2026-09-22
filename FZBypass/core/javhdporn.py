@@ -178,24 +178,30 @@ async def javhdporn(url: str) -> str:
             await browser.close()
             raise DDLException(f"Browser navigation timed out: {str(e)}")
 
-        # Step 4: Simulate a genuine interaction on the player area to kick-start cast.js
+        # Step 4: Hard-trigger the underlying event hooks bound to _0x3fe11f
+        # This executes a broad structural mouse trigger inside the player container spaces
         try:
-            await page.wait_for_selector("#video-player", timeout=5000)
-            await page.click("#video-player", timeout=2000)
+            await page.evaluate("""() => {
+                const players = document.querySelectorAll('#video-player, [data-mpu], .player-container, .play-button, .player');
+                players.forEach(p => {
+                    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+                    const up = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
+                    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+                    p.dispatchEvent(down);
+                    p.dispatchEvent(up);
+                    p.dispatchEvent(click);
+                });
+            }""")
         except:
             pass
 
-        # Also click the play button specifically
-        try:
-            await page.click(".play-button", timeout=3000)
-        except:
-            pass
+        # Step 5: Actively monitor for the decrypted targets inside nested frame elements
+        # Loop 8 times to capture the exact interval when the .m3u8 is decrypted
+        for _ in range(8):
+            await page.wait_for_timeout(2000)
 
-# Step 5: Read the decrypted string right out of window memory
-        for _ in range(3):
-            await page.wait_for_timeout(1500)
+            # Pull captured URLs from injected hooks
             try:
-                # Pull whatever strings the injected script caught inside the window runtime
                 memory_strings = await page.evaluate("window._capturedStreams")
                 for item in memory_strings:
                     matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', item)
@@ -204,41 +210,35 @@ async def javhdporn(url: str) -> str:
                         if clean_url not in video_urls:
                             video_urls.append(clean_url)
 
-                # Also pull captured URLs from XHR/fetch/video/iframe hooks
                 captured_urls = await page.evaluate("window._capturedUrls")
                 for u in captured_urls:
                     clean_url = u.replace("&amp;", "&")
                     if clean_url not in video_urls:
                         video_urls.append(clean_url)
 
-                # Pull captured video srcs
                 captured_videos = await page.evaluate("window._capturedVideos")
                 for v in captured_videos:
                     clean_url = v.replace("&amp;", "&")
                     if clean_url not in video_urls:
                         video_urls.append(clean_url)
-
-                # Early exit if we already have a good HLS master stream
-                if any('.m3u8' in u and ('master' in u.lower() or '_auto' in u.lower()) for u in video_urls):
-                    break
             except:
                 pass
 
-        # Fallback: scan all frames for HLS/MP4 URLs in raw HTML (only if needed)
-        if not video_urls:
-            try:
-                for frame in page.frames:
-                    try:
-                        frame_html = await frame.content()
-                        matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', frame_html)
-                        for match in matches:
-                            clean_url = match.replace("&amp;", "&")
-                            if clean_url not in video_urls:
-                                video_urls.append(clean_url)
-                    except:
-                        pass
-            except:
-                pass
+            # Scan all frames for streaming manifest lines generated after event dispatching
+            for frame in page.frames:
+                try:
+                    frame_html = await frame.content()
+                    matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', frame_html)
+                    for match in matches:
+                        clean_match = match.replace("&amp;", "&")
+                        if clean_match not in video_urls:
+                            video_urls.append(clean_match)
+                except:
+                    pass
+
+            # Early exit if we already have a good HLS master stream
+            if any('.m3u8' in u and ('master' in u.lower() or '_auto' in u.lower()) for u in video_urls):
+                break
 
         await browser.close()
 
