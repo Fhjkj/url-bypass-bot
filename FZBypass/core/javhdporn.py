@@ -195,10 +195,9 @@ async def javhdporn(url: str) -> str:
         except:
             pass
 
-        # Step 5: Actively monitor for the decrypted targets inside nested frame elements
-        # Loop 5 times to capture the exact interval when the .m3u8 is decrypted
-        for _ in range(5):
-            await page.wait_for_timeout(1500)
+        # Step 5: Active Loop - Constantly monitor for the real asset
+        for _ in range(8):
+            await page.wait_for_timeout(2000)
 
             # Pull captured URLs from injected hooks
             try:
@@ -224,65 +223,50 @@ async def javhdporn(url: str) -> str:
             except:
                 pass
 
-            # Early exit if we already have a good HLS master stream
-            if any('.m3u8' in u and ('master' in u.lower() or '_auto' in u.lower()) for u in video_urls):
-                break
-
-        # Fallback: scan all frames for streaming manifest lines (only if needed)
-        if not video_urls:
-            try:
-                for frame in page.frames:
-                    try:
-                        frame_html = await frame.content()
-                        matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', frame_html)
-                        for match in matches:
-                            clean_match = match.replace("&amp;", "&")
-                            if clean_match not in video_urls:
-                                video_urls.append(clean_match)
-                    except:
-                        pass
-            except:
-                pass
+            for frame in page.frames:
+                try:
+                    frame_html = await frame.content()
+                    # Capture any generated m3u8 or mp4 links immediately
+                    matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', frame_html)
+                    for match in matches:
+                        clean_match = match.replace("&amp;", "&")
+                        if clean_match not in video_urls:
+                            video_urls.append(clean_match)
+                except:
+                    pass
 
         await browser.close()
 
-    # Step 6: Advanced Media Inspection (Wipes out fake video ads completely)
+    # Step 6: SAFE FILTERING (Keeps the real video servers while discarding banners)
     clean_streams = []
 
-    # Extract the target ID/code from the original request URL (e.g., "apak-095")
     url_parts = url.lower().strip('/').split('/')
-    target_code = url_parts[-1].replace('-decensored', '').replace('-uncensored', '')
+    target_code = url_parts[-1].replace('-decensored', '').replace('-uncensored', '')  # e.g. "apak-095"
 
     for u in video_urls:
         url_lower = u.lower()
 
-        # 1. Drop standard tracking pixels and banner ad delivery networks
-        # NOTE: Use domain-specific checks, not broad keywords like 'click'
-        # or 'pop' which could match legitimate video URLs.
-        if any(bad in url_lower for bad in ['banner', 'ping.m3u8', 'adsbygoogle', 'doubleclick', 'googlesyndication', '300x250', '728x90']):
+        # FIXED: Removed generic 'ads' block string which was breaking the player tracking layer
+        if any(bad in url_lower for bad in ['banner', 'ping.m3u8', '300x250', '728x90', 'tracking', 'click', 'popup']):
             continue
 
-        # 2. TARGET IDENTIFIER VALIDATION: Only apply to MP4 URLs.
-        # HLS master playlists from the actual CDN use numeric IDs
-        # (e.g. edge-hls.doppiocdn.net/hls/263546963/master/...) and don't
-        # contain "apak-", so they pass through safely.
-        # Related-video MP4s (e.g. video.pornfhd.com/v/censored/104521_APAK-094.mp4)
-        # contain a different video code and get filtered out.
-        if '.mp4' in url_lower and "apak-" in url_lower and target_code not in url_lower:
+        # Target matching: If it is an ad preview loop of an old variant, drop it
+        if "apak-" in url_lower and target_code not in url_lower:
             continue
 
         if u not in clean_streams:
             clean_streams.append(u)
 
-    # Step 7: Sort the streams and prioritize high-definition master configurations
-    hls_urls = [u for u in clean_streams if 'master' in u.lower() or '_auto' in u.lower()]
-    if not hls_urls:
-        hls_urls = [u for u in clean_streams if '.m3u8' in u]
-    if not hls_urls:
-        hls_urls = [u for u in clean_streams if '.mp4' in u]
+    # Step 7: Direct prioritization loop
+    # Filter for the real HLS Master manifest links
+    hls_urls = [u for u in clean_streams if '.m3u8' in u]
 
-    # Step 8: Return output
-    if hls_urls:
-        return str(hls_urls[0])
+    # If no HLS manifests captured, look for the unthrottled storage delivery streams
+    if not hls_urls:
+        hls_urls = [u for u in clean_streams if 'storagexhd' in u.lower() and '.mp4' in u]
+
+    # Step 8: Output string conversion
+    if hls_urls and len(hls_urls) > 0:
+        return hls_urls[0]  # Grab the top clean asset path string
     else:
-        raise DDLException("Fake advertisement loops blocked, but the primary 1080p source asset failed to load.")
+        raise DDLException("Ad-filter verified, but the primary movie asset engine did not respond in time.")
