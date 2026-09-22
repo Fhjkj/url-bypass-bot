@@ -225,7 +225,7 @@ async def javhdporn(url: str) -> str:
         await browser.close()
 
     # Step 6: Strict Filtering & Cleanup
-    # Remove obvious ad/tracker noise but keep ALL stream candidates
+    # Remove obvious ad/tracker noise
     clean_streams = [
         u for u in video_urls
         if 'banner' not in u.lower()
@@ -234,24 +234,36 @@ async def javhdporn(url: str) -> str:
         and 'pop' not in u.lower()
     ]
 
-    # Separate HLS streams from MP4 files
+    # Separate by type and domain priority
     hls_urls = [u for u in clean_streams if '.m3u8' in u]
     mp4_urls = [u for u in clean_streams if '.mp4' in u]
 
-    # Prefer HLS master/adaptive playlists (the actual video stream)
+    # Tier 1: HLS master/adaptive playlists from the actual video CDN
     hls_master = [u for u in hls_urls if 'master' in u.lower() or '_auto' in u.lower()]
     if hls_master:
         return str(hls_master[0])
+
+    # Tier 2: Any HLS stream
     if hls_urls:
         return str(hls_urls[0])
-    if mp4_urls:
-        # Filter out obvious thumbnail/preview MP4s only when we have alternatives
-        real_mp4 = [u for u in mp4_urls if 'storagexhd' not in u.lower()
-                    and 'thumbnail' not in u.lower()
-                    and 'medium' not in u.lower()
-                    and 'thumb' not in u.lower()]
-        if real_mp4:
-            return str(real_mp4[0])
-        return str(mp4_urls[0])
+
+    # Tier 3: MP4 from the actual video CDN (doppiocdn / edge-hls)
+    # Exclude related-video MP4s from pornfhd.com / storagexhd
+    real_mp4 = [u for u in mp4_urls
+                if 'doppiocdn' in u.lower()
+                or 'edge-hls' in u.lower()
+                or 'doppicdn' in u.lower()]
+    if real_mp4:
+        return str(real_mp4[0])
+
+    # Tier 4: Any MP4 that isn't obviously a related video thumbnail
+    non_related = [u for u in mp4_urls
+                   if 'pornfhd.com' not in u.lower()
+                   and 'storagexhd' not in u.lower()
+                   and 'thumbnail' not in u.lower()
+                   and 'medium' not in u.lower()
+                   and 'thumb' not in u.lower()]
+    if non_related:
+        return str(non_related[0])
 
     raise DDLException("Page decoded securely, but no active streaming strings were released.")
