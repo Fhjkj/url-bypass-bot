@@ -318,10 +318,13 @@ async def solve_turnstile(
 
                 # After the loop, try submitting the form if a Turnstile token exists
                 # or the challenge appears cleared (Jobsheel auto-submits via callback).
+                # Initialize token from the polling loop result to prevent
+                # UnboundLocalError if the form-submission try block fails.
+                token = token_detected
                 try:
                     form = page.locator("form").first
                     if await form.count():
-                        token = await _detect_turnstile_token(page)
+                        token = await _detect_turnstile_token(page) or token_detected
                         challenge_cleared = not await _has_challenge(page)
                         if token or challenge_cleared:
                             await form.evaluate("form => form.requestSubmit ? form.requestSubmit() : form.submit()")
