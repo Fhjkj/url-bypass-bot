@@ -156,12 +156,15 @@ async def javhdporn(url: str) -> str:
             }
         """)
 
-        # Network listener as a fallback layer
-        async def handle_response(res):
-            res_url = res.url
-            if any(ext in res_url.lower() for ext in ['.m3u8', '.mp4']):
-                if res_url not in video_urls:
-                    video_urls.append(res_url)
+        # Network listener as a fallback layer (sync handler to avoid event-loop blocking)
+        def handle_response(res):
+            try:
+                res_url = res.url
+                if any(ext in res_url.lower() for ext in ['.m3u8', '.mp4']):
+                    if res_url not in video_urls:
+                        video_urls.append(res_url)
+            except Exception:
+                pass
 
         page.on("response", handle_response)
 
@@ -186,8 +189,8 @@ async def javhdporn(url: str) -> str:
             pass
 
         # Step 5: Read the decrypted string right out of window memory
-        for _ in range(5):
-            await page.wait_for_timeout(2000)
+        for _ in range(3):
+            await page.wait_for_timeout(1500)
             try:
                 # Pull whatever strings the injected script caught inside the window runtime
                 memory_strings = await page.evaluate("window._capturedStreams")
@@ -204,23 +207,28 @@ async def javhdporn(url: str) -> str:
                     clean_url = u.replace("&amp;", "&")
                     if clean_url not in video_urls:
                         video_urls.append(clean_url)
+
+                # Early exit if we already have a good HLS master stream
+                if any('.m3u8' in u and ('master' in u.lower() or '_auto' in u.lower()) for u in video_urls):
+                    break
             except:
                 pass
 
-        # Fallback: scan all frames for HLS/MP4 URLs in raw HTML
-        try:
-            for frame in page.frames:
-                try:
-                    frame_html = await frame.content()
-                    matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', frame_html)
-                    for match in matches:
-                        clean_url = match.replace("&amp;", "&")
-                        if clean_url not in video_urls:
-                            video_urls.append(clean_url)
-                except:
-                    pass
-        except:
-            pass
+        # Fallback: scan all frames for HLS/MP4 URLs in raw HTML (only if needed)
+        if not video_urls:
+            try:
+                for frame in page.frames:
+                    try:
+                        frame_html = await frame.content()
+                        matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', frame_html)
+                        for match in matches:
+                            clean_url = match.replace("&amp;", "&")
+                            if clean_url not in video_urls:
+                                video_urls.append(clean_url)
+                    except:
+                        pass
+            except:
+                pass
 
         await browser.close()
 
