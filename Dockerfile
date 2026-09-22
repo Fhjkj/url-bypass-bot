@@ -11,7 +11,7 @@ WORKDIR /app
 
 # Copy your dependency files and install them
 COPY requirements.txt .
-RUN pip install --no-cache-dir --force-reinstall --no-binary :all: greenlet && pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy your bot files into the container
 COPY . .
