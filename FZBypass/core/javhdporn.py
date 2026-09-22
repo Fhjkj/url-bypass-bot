@@ -59,11 +59,9 @@ async def javhdporn(url: str) -> str:
                 else:
                     raise DDLException(f"External infrastructure returned status: {response.status_code}")
         except httpx.RequestError:
-            # If the server is completely down or unreachable, bypass immediately
             pass
 
         # Step 3: Local Fallback - use Playwright to decrypt the data-mpu payload
-        # The Solver API returns cookies but the video URL is encrypted in cast.js
         if not result:
             from FZBypass.core.turnstile_solver import solve_challenge
             local_result = await solve_challenge(url, timeout_ms=30000)
@@ -81,7 +79,7 @@ async def javhdporn(url: str) -> str:
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0")
 
-    # Step 2: Initialize Playwright Engine
+    # Step 4: Initialize Playwright Engine (minimal memory footprint)
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -92,6 +90,12 @@ async def javhdporn(url: str) -> str:
                 '--disable-dev-shm-usage',
                 '--headless=new',
                 '--disable-blink-features=AutomationControlled',
+                '--disable-gpu',
+                '--single-process',
+                '--no-zygote',
+                '--disable-extensions',
+                '--disable-software-rasterizer',
+                '--memory-limit=128',
             ]
         )
         context = await browser.new_context(
@@ -230,9 +234,9 @@ async def javhdporn(url: str) -> str:
             except:
                 pass
 
-        # Step 4: Robust 30-Second Decryption Verification Loop
+        # Step 4: Robust Decryption Verification Loop (reduced to 8 iterations / 16s)
         # Gives cast.js ample time to parse atob variables on the single core
-        for _ in range(15):
+        for _ in range(8):
             await page.wait_for_timeout(2000)
 
             for frame in page.frames:
@@ -246,6 +250,10 @@ async def javhdporn(url: str) -> str:
                             video_urls.append(clean_match)
                 except:
                     pass
+
+            # Early exit if we already have a good HLS master stream
+            if any('.m3u8' in u and ('master' in u.lower() or '_auto' in u.lower()) for u in video_urls):
+                break
 
         await browser.close()
 
