@@ -197,6 +197,29 @@ async def javhdporn(url: str) -> str:
                     return origPlay.apply(this, arguments);
                 };
 
+                // Hook postMessage — cast.js sends the decrypted URL to
+                // #playerifr via postMessage, bypassing all DOM/property hooks.
+                const origPostMessage = window.postMessage;
+                window.postMessage = function(message, targetOrigin, transfer) {
+                    try {
+                        if (typeof message === 'string') record(message);
+                        else if (message && typeof message === 'object') {
+                            // Walk the object looking for URL-like strings
+                            const walk = (obj) => {
+                                if (!obj || typeof obj !== 'object') return;
+                                if (typeof obj === 'string') { record(obj); return; }
+                                for (const key of Object.keys(obj)) {
+                                    const val = obj[key];
+                                    if (typeof val === 'string') record(val);
+                                    else walk(val);
+                                }
+                            };
+                            walk(message);
+                        }
+                    } catch(e) {}
+                    return origPostMessage.call(this, message, targetOrigin, transfer);
+                };
+
                 // Expose captured list for later polling
                 window.__video_urls_captured = captured;
             })();
@@ -269,6 +292,28 @@ async def javhdporn(url: str) -> str:
                         return origPlay.apply(this, arguments);
                     };
 
+                    // Hook postMessage — cast.js sends the decrypted URL to
+                    // #playerifr via postMessage, bypassing all DOM/property hooks.
+                    const origPostMessage = window.postMessage;
+                    window.postMessage = function(message, targetOrigin, transfer) {
+                        try {
+                            if (typeof message === 'string') record(message);
+                            else if (message && typeof message === 'object') {
+                                const walk = (obj) => {
+                                    if (!obj || typeof obj !== 'object') return;
+                                    if (typeof obj === 'string') { record(obj); return; }
+                                    for (const key of Object.keys(obj)) {
+                                        const val = obj[key];
+                                        if (typeof val === 'string') record(val);
+                                        else walk(val);
+                                    }
+                                };
+                                walk(message);
+                            }
+                        } catch(e) {}
+                        return origPostMessage.call(this, message, targetOrigin, transfer);
+                    };
+
                     window.__video_urls_captured = captured;
                 })();
             """)
@@ -295,7 +340,27 @@ async def javhdporn(url: str) -> str:
         deadline = time.time() + 35
         while time.time() < deadline:
             try:
-                captured = await page.evaluate("() => window.__video_urls_captured || []")
+                captured = await page.evaluate("""() => {
+                    const urls = (window.__video_urls_captured || []).slice();
+                    // Also scan iframe content documents for video URLs
+                    const iframes = Array.from(document.querySelectorAll('iframe'));
+                    const markers = ['.m3u8', '.mp4', 'doppiocdn', 'edge-hls'];
+                    const re = /https?:\\/\\/[^"'\\s<>]+/g;
+                    for (const iframe of iframes) {
+                        try {
+                            const doc = iframe.contentDocument;
+                            if (doc && doc.documentElement) {
+                                const html = doc.documentElement.outerHTML;
+                                const matches = html.match(re) || [];
+                                for (const m of matches) {
+                                    const lower = m.toLowerCase();
+                                    if (markers.some(mk => lower.includes(mk))) urls.push(m);
+                                }
+                            }
+                        } catch(e) {}
+                    }
+                    return urls;
+                }""")
                 for u in captured:
                     if u not in video_urls:
                         video_urls.append(u)
@@ -342,6 +407,22 @@ async def javhdporn(url: str) -> str:
                     // Also check text content of likely containers
                     if (el.tagName === 'VIDEO' || el.tagName === 'SOURCE') {
                         scan(el.textContent || el.outerHTML);
+                    }
+                }
+
+                // Scan all iframes — cast.js posts the decrypted URL to
+                // #playerifr via postMessage; the URL lives inside the
+                // iframe's document, not the parent page.
+                const iframes = Array.from(document.querySelectorAll('iframe'));
+                for (const iframe of iframes) {
+                    try {
+                        const doc = iframe.contentDocument;
+                        if (doc) scan(doc.documentElement ? doc.documentElement.outerHTML : '');
+                        const iframeScripts = Array.from(doc.querySelectorAll('script'));
+                        for (const s of iframeScripts) scan(s.textContent || s.innerText);
+                    } catch(e) {
+                        // CORS-blocked iframes — try src attribute instead
+                        if (iframe.src) scan(iframe.src);
                     }
                 }
 
