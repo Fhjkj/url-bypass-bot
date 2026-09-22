@@ -159,16 +159,30 @@ async def javhdporn(url: str) -> str:
             pass
 
         # Step 6: Wait for HLS stream to load
-        # The play button click navigates to stripchat.com which loads
-        # the HLS stream. We poll for up to 45 seconds (Render Free Tier
-        # is slow - single core, limited memory).
-        deadline = time.time() + 45
+        # Stripchat loads a 20-second ad first, then the actual video stream.
+        # We need to wait for the second HLS URL (the real video) to appear.
+        # Poll for up to 60 seconds to allow the ad to finish and the real
+        # stream to start.
+        deadline = time.time() + 60
+        non_ad_hls_count = 0
         while time.time() < deadline:
-            # Check if we have a master playlist URL
-            master_urls = [u for u in hls_urls if 'master' in u.lower() or '_auto' in u.lower()]
-            if master_urls:
+            # Check for non-ad master playlist URLs
+            ad_patterns = ['ad-', 'ads-', 'advertisement', 'pre-roll', 'mid-roll',
+                           'post-roll', 'banner', 'trailer', 'teaser', 'promo',
+                           'sponsor', 'adbreak', 'adload', 'adtag', 'adurl']
+            clean = [u for u in hls_urls
+                     if not any(p in u.lower() for p in ad_patterns)
+                     and 'ping.m3u8' not in u.lower()]
+            master = [u for u in clean if 'master' in u.lower() or '_auto' in u.lower()]
+            if master and len(hls_urls) >= 2:
                 break
-            await page.wait_for_timeout(1000)
+            if master:
+                # If we have a master URL and at least one other URL (the ad),
+                # wait a few more seconds for the real stream to fully load
+                non_ad_hls_count += 1
+                if non_ad_hls_count >= 3:
+                    break
+            await page.wait_for_timeout(2000)
 
         # Log what we captured for debugging
         LOGGER.info("javhdporn: captured %d HLS URLs, %d MP4 URLs, final page: %s",
@@ -177,16 +191,50 @@ async def javhdporn(url: str) -> str:
         await browser.close()
 
     # Step 7: Filter and prioritize
-    # Remove ad/tracker ping URLs
-    clean_hls = [u for u in hls_urls if 'ping.m3u8' not in u.lower()]
+    # Stripchat loads a 20-second ad first, then the actual video stream.
+    # We need to filter out ad URLs and prioritize the real video playlist.
+
+    # Ad-related URL patterns to exclude
+    ad_patterns = [
+        'ad-', 'ads-', 'advertisement', 'pre-roll', 'mid-roll', 'post-roll',
+        'banner', 'ping.m3u8', 'trailer', 'teaser', 'promo', 'sponsor',
+        'adbreak', 'adbreaks', 'adload', 'adtag', 'adurl',
+    ]
+
+    clean_hls = []
+    for u in hls_urls:
+        url_lower = u.lower()
+        # Skip ad URLs
+        if any(p in url_lower for p in ad_patterns):
+            continue
+        # Skip ping URLs
+        if 'ping.m3u8' in url_lower:
+            continue
+        clean_hls.append(u)
 
     # Prioritize master playlists (contain 'master' or '_auto')
     master_urls = [u for u in clean_hls if 'master' in u.lower() or '_auto' in u.lower()]
 
+    # If we have multiple master URLs, prefer the one with the highest
+    # video quality (1080p > 720p > 480p > 360p)
+    if len(master_urls) > 1:
+        def quality_score(url):
+            url_lower = url.lower()
+            if '1080p' in url_lower or '1080' in url_lower:
+                return 4
+            if '720p' in url_lower or '720' in url_lower:
+                return 3
+            if '480p' in url_lower or '480' in url_lower:
+                return 2
+            if '360p' in url_lower or '360' in url_lower:
+                return 1
+            return 0
+        master_urls.sort(key=quality_score, reverse=True)
+
     if master_urls:
         return master_urls[0]
 
-    # Fallback: any HLS URL
+    # Fallback: any non-ad HLS URL
     if clean_hls:
         return clean_hls[0]
 
