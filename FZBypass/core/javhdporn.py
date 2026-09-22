@@ -79,17 +79,14 @@ async def javhdporn(url: str) -> str:
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0")
 
-    # Step 4: Initialize Playwright Engine (minimal memory footprint)
+    # Step 4: Initialize Playwright Engine with strict resource limits
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            channel="chromium",
             args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--headless=new',
-                '--disable-blink-features=AutomationControlled',
                 '--disable-gpu',
                 '--single-process',
                 '--no-zygote',
@@ -108,96 +105,10 @@ async def javhdporn(url: str) -> str:
             await context.add_cookies(cookies)
 
         page = await context.new_page()
-
-        # Spoof navigator.webdriver to avoid bot detection
-        await page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-        """)
         video_urls = []
 
-        # Step 3: INJECT RUNTIME MEMORY HOOKS (The Cheat Code)
-        # This intercepts the exact moment cast.js decrypts the data-mpu payload string
-        await page.add_init_script("""
-            window._capturedStreams = [];
-            window._capturedUrls = [];
-            window._capturedVideos = [];
-
-            // Hook Base64 Decoder - capture ALL decoded strings (we filter later)
-            const originalAtob = window.atob;
-            window.atob = function(str) {
-                try {
-                    const decoded = originalAtob(str);
-                    if (decoded && decoded.length > 10) {
-                        window._capturedStreams.push(decoded);
-                    }
-                } catch(e) {}
-                return originalAtob(str);
-            };
-
-            // Hook JSON Parser - capture ALL parsed strings
-            const originalParse = JSON.parse;
-            JSON.parse = function(text) {
-                if (text && text.length > 10) {
-                    window._capturedStreams.push(text);
-                }
-                return originalParse(text);
-            };
-
-            // Hook XMLHttpRequest
-            const origOpen = XMLHttpRequest.prototype.open;
-            XMLHttpRequest.prototype.open = function(method, url) {
-                if (url) window._capturedUrls.push(url);
-                return origOpen.apply(this, arguments);
-            };
-
-            // Hook fetch
-            const origFetch = window.fetch;
-            window.fetch = function(url, opts) {
-                if (url) {
-                    var u = typeof url === 'string' ? url : url.href || String(url);
-                    window._capturedUrls.push(u);
-                }
-                return origFetch.apply(this, arguments);
-            };
-
-            // Hook video element src setter
-            const videoProto = HTMLVideoElement.prototype;
-            const origSrc = Object.getOwnPropertyDescriptor(videoProto, 'src');
-            if (origSrc && origSrc.set) {
-                Object.defineProperty(videoProto, 'src', {
-                    set: function(val) {
-                        if (val) {
-                            window._capturedVideos.push(val);
-                            window._capturedUrls.push(val);
-                        }
-                        return origSrc.set.call(this, val);
-                    }
-                });
-            }
-
-            // Hook iframe src setter
-            const iframeProto = HTMLIFrameElement.prototype;
-            const iframeSrc = Object.getOwnPropertyDescriptor(iframeProto, 'src');
-            if (iframeSrc && iframeSrc.set) {
-                Object.defineProperty(iframeProto, 'src', {
-                    set: function(val) {
-                        if (val) window._capturedUrls.push(val);
-                        return iframeSrc.set.call(this, val);
-                    }
-                });
-            }
-
-            // Hook video play() to catch when the main video starts playing
-            const origPlay = HTMLVideoElement.prototype.play;
-            HTMLVideoElement.prototype.play = function() {
-                if (this.src) window._capturedVideos.push(this.src);
-                return origPlay.apply(this, arguments);
-            };
-        """)
-
-        # Network listener as a fallback layer (sync handler to avoid event-loop blocking)
+        # LIGHTWEIGHT EVENT LISTENER: Catches the link instantly in background network traffic
+        # This completely replaces the heavy frame.content() string parsing loops!
         def handle_response(res):
             try:
                 res_url = res.url
@@ -210,51 +121,26 @@ async def javhdporn(url: str) -> str:
         page.on("response", handle_response)
 
         try:
-            # Let the page load its structural frames
-            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=35000)
+            await page.wait_for_selector("#video-player, [data-mpu]", timeout=5000)
         except Exception as e:
             await browser.close()
             raise DDLException(f"Browser navigation timed out: {str(e)}")
 
-        # Step 2: Force wait for the decryption placeholder to mount
-        try:
-            await page.wait_for_selector("#video-player, [data-mpu]", timeout=10000)
-        except:
-            pass
-
-        # Step 3: Hard-trigger synthetic mouse coordinate dispatching
-        # Obfuscated files look for bounding coordinate flags to prevent generic scraping loops
+        # Step 5: Trigger synthetic mouse events to unpack the _0x3fe11f listener hooks
         try:
             box = await page.locator("#video-player").first.bounding_box()
             if box:
                 await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+            else:
+                await page.click("#video-player", timeout=1500)
         except:
-            try:
-                await page.click("#video-player", timeout=2000)
-            except:
-                pass
+            pass
 
-        # Step 4: Robust Decryption Verification Loop (reduced to 8 iterations / 16s)
-        # Gives cast.js ample time to parse atob variables on the single core
-        for _ in range(8):
-            await page.wait_for_timeout(2000)
-
-            for frame in page.frames:
-                try:
-                    frame_html = await frame.content()
-                    # Deep match for any freshly generated streaming targets post-decryption
-                    matches = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', frame_html)
-                    for match in matches:
-                        clean_match = match.replace("&amp;", "&")
-                        if clean_match not in video_urls:
-                            video_urls.append(clean_match)
-                except:
-                    pass
-
-            # Early exit if we already have a good HLS master stream
-            if any('.m3u8' in u and ('master' in u.lower() or '_auto' in u.lower()) for u in video_urls):
-                break
-
+        # Step 6: Low-Overhead Idle Sleep
+        # Because the background response listener handles the work, the main thread can rest.
+        # This allows cast.js to decrypt the data-mpu block smoothly on Render's single core.
+        await page.wait_for_timeout(15000)
         await browser.close()
 
     # Step 6: SAFE FILTERING (Keeps the real video servers while discarding banners)
