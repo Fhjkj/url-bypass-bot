@@ -63,7 +63,7 @@ def solve():
     if isinstance(headless, str):
         headless = headless.lower() not in {"0", "false", "no", "off"}
 
-    result: SolveResult = solve_sync(url, timeout_ms=timeout_ms, headless=headless)
+    result: SolveResult = asyncio.run(solve_sync(url, timeout_ms=timeout_ms, headless=headless))
     return jsonify(asdict(result))
 
 

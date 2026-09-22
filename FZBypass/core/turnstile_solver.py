@@ -368,6 +368,6 @@ async def solve_challenge(url: str, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Sol
     return await solve_turnstile(url, timeout_ms=timeout_ms)
 
 
-def solve_sync(url: str, timeout_ms: int = DEFAULT_TIMEOUT_MS, headless: bool = True) -> SolveResult:
-    """Synchronous wrapper for use inside Flask handlers."""
-    return asyncio.run(solve_turnstile(url, timeout_ms=timeout_ms, headless=headless))
+async def solve_sync(url: str, timeout_ms: int = DEFAULT_TIMEOUT_MS, headless: bool = True) -> SolveResult:
+    """Async wrapper for use inside async handlers (e.g. bypass plugins)."""
+    return await solve_turnstile(url, timeout_ms=timeout_ms, headless=headless)
