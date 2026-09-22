@@ -21,6 +21,6 @@ services:
       - key: GOFILE_API_TOKEN
         sync: false
       - key: SOLVER_API
-        value: https://turnstile-solver-production-7e59.up.railway.app
+        value: https://turnstile-solver-production-edc7.up.railway.app
       - key: BYPASS_PROXY_POOL
         sync: false
