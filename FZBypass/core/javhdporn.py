@@ -155,8 +155,9 @@ async def javhdporn(url: str) -> str:
 
         # Step 6: Wait for HLS stream to load
         # The play button click navigates to stripchat.com which loads
-        # the HLS stream. We poll for up to 30 seconds.
-        deadline = time.time() + 30
+        # the HLS stream. We poll for up to 45 seconds (Render Free Tier
+        # is slow - single core, limited memory).
+        deadline = time.time() + 45
         while time.time() < deadline:
             # Check if we have a master playlist URL
             master_urls = [u for u in hls_urls if 'master' in u.lower() or '_auto' in u.lower()]
