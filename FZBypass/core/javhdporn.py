@@ -122,7 +122,8 @@ async def javhdporn(url: str) -> str:
 
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=35000)
-            await page.wait_for_selector("#video-player, [data-mpu]", timeout=5000)
+            # Wait for the element to be attached (not necessarily visible)
+            await page.wait_for_selector("#video-player, [data-mpu]", state="attached", timeout=5000)
         except Exception as e:
             await browser.close()
             raise DDLException(f"Browser navigation timed out: {str(e)}")
@@ -133,9 +134,12 @@ async def javhdporn(url: str) -> str:
             if box:
                 await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
             else:
-                await page.click("#video-player", timeout=1500)
+                await page.click("#video-player", timeout=1500, force=True)
         except:
-            pass
+            try:
+                await page.click("#video-player", timeout=1500, force=True)
+            except:
+                pass
 
         # Step 6: Low-Overhead Idle Sleep
         # Because the background response listener handles the work, the main thread can rest.
