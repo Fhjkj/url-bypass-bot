@@ -50,6 +50,11 @@ def is_excep_link(url):
 async def direct_link_checker(link, onlylink=False):
     domain = urlparse(link).hostname
 
+    # FORCE INTERCEPT: Route javhdporn.net URLs straight to the handler
+    # before any other regex checks can misroute them.
+    if "javhdporn.net" in link.lower():
+        return await javhdporn(link)
+
     # CRITICAL FIX: If the link is already a processed streaming media file,
     # stop running regex checks and return it immediately! This prevents
     # decrypted .m3u8/.mp4 streams from javhdporn.net (and other handlers)
