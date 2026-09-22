@@ -62,15 +62,21 @@ async def javhdporn(url: str) -> str:
             # If the server is completely down or unreachable, bypass immediately
             pass
 
-        # CRITICAL PERFORMANCE HOTFIX:
-        # Disable the heavy local Playwright fallback loop on Render's Free Tier.
-        # Spawning headless Chromium sequentially inside a throttled container
-        # guarantees a timeout crash.
+        # Step 3: Local Fallback - use Playwright to decrypt the data-mpu payload
+        # The Solver API returns cookies but the video URL is encrypted in cast.js
         if not result:
-            raise DDLException(
-                "Bypass infrastructure is temporarily saturated. Local browser fallback aborted "
-                "to prevent system resource exhaustion."
-            )
+            from FZBypass.core.turnstile_solver import solve_challenge
+            local_result = await solve_challenge(url, timeout_ms=30000)
+            if local_result.success:
+                result = {
+                    "cookies": local_result.cookies,
+                    "user_agent": local_result.user_agent,
+                }
+                CF_COOKIE_CACHE["cookies"] = local_result.cookies
+                CF_COOKIE_CACHE["user_agent"] = local_result.user_agent
+                CF_COOKIE_CACHE["expires_at"] = current_time + 3600
+            else:
+                raise DDLException(f"Cloudflare bypass failed: {local_result.error}")
 
     cookies = result.get("cookies", [])
     user_agent = result.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0")
