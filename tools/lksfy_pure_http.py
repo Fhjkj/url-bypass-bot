@@ -10,6 +10,7 @@ import os
 import random
 import re
 import time
+import base64
 import requests
 from bs4 import BeautifulSoup
 
@@ -176,6 +177,13 @@ def lksfy_get_link(target_url, proxy=None, delay=12):
             if decoded:
                 return f"{tm_url} (decoded: {decoded})"
             return tm_url
+        # recruitmentaim.in gateway: construct the Telegram URL from the
+        # alias cookie (e.g. alias=UFMfmoi -> get-UFMfmoi -> base64)
+        alias = session.cookies.get("alias")
+        if alias:
+            token = f"get-{alias}"
+            start_param = base64.b64encode(token.encode()).decode().rstrip("=")
+            return f"https://t.me/Jitendra_kumarbot?start={start_param}"
         js_redirect = _extract_js_redirect(resp.text)
         if js_redirect:
             return _follow_redirect_chain(session, js_redirect)
@@ -236,6 +244,13 @@ def lksfy_get_link(target_url, proxy=None, delay=12):
             if decoded:
                 return f"{tm_url} (decoded: {decoded})"
             return tm_url
+        # recruitmentaim.in gateway: construct the Telegram URL from the
+        # alias cookie (e.g. alias=UFMfmoi -> get-UFMfmoi -> base64)
+        alias = session.cookies.get("alias")
+        if alias:
+            token = f"get-{alias}"
+            start_param = base64.b64encode(token.encode()).decode().rstrip("=")
+            return f"https://t.me/Jitendra_kumarbot?start={start_param}"
         try:
             return r.json().get("url")
         except json.JSONDecodeError:
@@ -260,8 +275,10 @@ def _extract_js_redirect(html_text):
 def _follow_redirect_chain(session, first_location):
     """Follow a chain of 301/302s (and JS redirects) until a final 200 page.
 
-    Also extracts any t.me bot link embedded in the final page and decodes
-    its base64 'start' parameter to reveal the target token.
+    When the chain lands on a recruitmentaim.in gateway, construct the
+    Telegram bot URL from the alias cookie set by the gateway:
+        https://t.me/Jitendra_kumarbot?start=Z2V0LTg3NTg2NjM1Mzg2NDcyNzY
+    which decodes to the target token (e.g. get-8758663538647276).
     """
     if not first_location:
         return None
@@ -282,6 +299,13 @@ def _follow_redirect_chain(session, first_location):
                 if decoded:
                     return f"{tm_url} (decoded: {decoded})"
                 return tm_url
+            # recruitmentaim.in gateway: construct the Telegram URL from the
+            # alias cookie (e.g. alias=UFMfmoi -> get-UFMfmoi -> base64)
+            alias = session.cookies.get("alias")
+            if alias:
+                token = f"get-{alias}"
+                start_param = base64.b64encode(token.encode()).decode().rstrip("=")
+                return f"https://t.me/Jitendra_kumarbot?start={start_param}"
             js = _extract_js_redirect(r.text)
             if js and js != url:
                 url = js
