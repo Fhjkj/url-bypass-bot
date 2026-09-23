@@ -46,21 +46,6 @@ def solve_turnstile_api(sitekey, proxy=None):
     raise RuntimeError("Turnstile solve timed out")
 
 
-def extract_form_data(soup):
-    """Harvest every hidden input field inside the main form."""
-    form = soup.find("form")
-    if not form:
-        raise RuntimeError("No form found on page")
-    data = {}
-    for inp in form.find_all("input", {"type": "hidden"}):
-        name = inp.get("name")
-        value = inp.get("value", "")
-        if name:
-            data[name] = value
-    action = form.get("action", "")
-    return data, action
-
-
 def extract_turnstile_sitekey(soup):
     """Extract Turnstile sitekey by class name cf-turnstile."""
     widget = soup.find(class_="cf-turnstile")
@@ -71,6 +56,41 @@ def extract_turnstile_sitekey(soup):
     # Fallback: any element with data-sitekey
     elem = soup.find(attrs={"data-sitekey": True})
     return elem.get("data-sitekey") if elem else None
+
+
+def parse_lksfy_html(html_text):
+    """BeautifulSoup method: parse lksfy.com HTML and return structured data.
+
+    Returns a dict with:
+      - sitekey: Cloudflare Turnstile data-sitekey (found via cf-turnstile class)
+      - form_data: dict of every hidden input field inside the main form
+      - action: form action attribute (URL to POST to)
+      - title: page title (optional diagnostic)
+    """
+    soup = BeautifulSoup(html_text, "html.parser")
+
+    sitekey = extract_turnstile_sitekey(soup)
+
+    form = soup.find("form")
+    form_data = {}
+    action = ""
+    if form:
+        action = form.get("action", "")
+        # Harvest every hidden input field inside the main form automatically
+        for inp in form.find_all("input", {"type": "hidden"}):
+            name = inp.get("name")
+            value = inp.get("value", "")
+            if name:
+                form_data[name] = value
+
+    title = soup.title.string.strip() if soup.title else ""
+
+    return {
+        "sitekey": sitekey,
+        "form_data": form_data,
+        "action": action,
+        "title": title,
+    }
 
 
 def lksfy_get_link(target_url, api_key=None, proxy=None, delay=12):
@@ -98,12 +118,13 @@ def lksfy_get_link(target_url, api_key=None, proxy=None, delay=12):
     # PHASE 2: Inspect reverse-engineered web flow
     resp = session.get("https://lksfy.com", timeout=30)
     resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+    parsed = parse_lksfy_html(resp.text)
 
-    sitekey = extract_turnstile_sitekey(soup)
+    sitekey = parsed["sitekey"]
     if not sitekey:
         raise RuntimeError("Could not find Turnstile sitekey")
-    form_data, action = extract_form_data(soup)
+    form_data = parsed["form_data"]
+    action = parsed["action"]
 
     # PHASE 3: Solve Turnstile challenge via API
     token = solve_turnstile_api(sitekey, proxy=proxy)
