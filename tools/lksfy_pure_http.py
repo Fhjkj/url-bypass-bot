@@ -59,15 +59,40 @@ def solve_turnstile_api(sitekey, proxy=None):
     return token
 
 
-def extract_turnstile_sitekey(soup):
-    """Extract Turnstile sitekey by class name cf-turnstile."""
-    widget = soup.find(class_="cf-turnstile")
-    if widget:
-        sitekey = widget.get("data-sitekey")
-        if sitekey:
-            return sitekey
-    elem = soup.find(attrs={"data-sitekey": True})
-    return elem.get("data-sitekey") if elem else None
+def extract_turnstile_sitekey(html_data):
+    """Extract Turnstile sitekey from HTML using BeautifulSoup + regex fallback.
+
+    Method A: Direct lookup via the standard widget class name (cf-turnstile).
+    Method B: Fallback regex if they try to hide the class name.
+    """
+    soup = BeautifulSoup(html_data, "html.parser")
+
+    # Method A: Direct lookup via the standard widget class name
+    turnstile_div = soup.find("div", class_="cf-turnstile")
+    if turnstile_div and turnstile_div.has_attr("data-sitekey"):
+        return turnstile_div["data-sitekey"]
+
+    # Method B: Fallback regex if they try to hide the class name
+    fallback_match = re.search(r'data-sitekey=["\'](0x[A-Za-z0-9_-]+)["\']', html_data)
+    if fallback_match:
+        return fallback_match.group(1)
+
+    return None
+
+
+def decode_start_param(url):
+    """Decode a base64 'start' parameter from a Telegram URL.
+
+    Example: https://t.me/Jitendra_kumarbot?start=Z2V0LTg3NTg2NjM1Mzg2NDcyNzY
+    Returns the decoded target token string (e.g. 'get-8758663538647276').
+    """
+    match = re.search(r"[?&]start=([A-Za-z0-9_-]+)", url)
+    if not match:
+        return None
+    base64_payload = match.group(1)
+    # Fix padding so Python can decode it properly
+    padded_payload = base64_payload + "=" * (4 - len(base64_payload) % 4)
+    return base64.b64decode(padded_payload).decode("utf-8")
 
 
 def parse_lksfy_html(html_text):
@@ -79,9 +104,9 @@ def parse_lksfy_html(html_text):
       - action: form action attribute (URL to POST to)
       - title: page title (optional diagnostic)
     """
-    soup = BeautifulSoup(html_text, "html.parser")
+    sitekey = extract_turnstile_sitekey(html_text)
 
-    sitekey = extract_turnstile_sitekey(soup)
+    soup = BeautifulSoup(html_text, "html.parser")
 
     form = soup.find("form")
     form_data = {}
@@ -143,6 +168,14 @@ def lksfy_get_link(target_url, proxy=None, delay=12):
 
     # Some short links return 200 with a JS meta-refresh or window.location
     if resp.status_code == 200:
+        # Check for a t.me bot link embedded directly in the response
+        tm_match = re.search(r'https?://t\.me/[^"\'\s<>]+', resp.text)
+        if tm_match:
+            tm_url = tm_match.group(0)
+            decoded = decode_start_param(tm_url)
+            if decoded:
+                return f"{tm_url} (decoded: {decoded})"
+            return tm_url
         js_redirect = _extract_js_redirect(resp.text)
         if js_redirect:
             return _follow_redirect_chain(session, js_redirect)
@@ -195,6 +228,14 @@ def lksfy_get_link(target_url, proxy=None, delay=12):
     if r.status_code == 302:
         return _follow_redirect_chain(session, r.headers.get("Location"))
     if r.status_code == 200:
+        # Check for t.me bot link in the response
+        tm_match = re.search(r'https?://t\.me/[^"\'\s<>]+', r.text)
+        if tm_match:
+            tm_url = tm_match.group(0)
+            decoded = decode_start_param(tm_url)
+            if decoded:
+                return f"{tm_url} (decoded: {decoded})"
+            return tm_url
         try:
             return r.json().get("url")
         except json.JSONDecodeError:
@@ -217,7 +258,11 @@ def _extract_js_redirect(html_text):
 
 
 def _follow_redirect_chain(session, first_location):
-    """Follow a chain of 301/302s (and JS redirects) until a final 200 page."""
+    """Follow a chain of 301/302s (and JS redirects) until a final 200 page.
+
+    Also extracts any t.me bot link embedded in the final page and decodes
+    its base64 'start' parameter to reveal the target token.
+    """
     if not first_location:
         return None
     visited = 0
@@ -229,6 +274,14 @@ def _follow_redirect_chain(session, first_location):
             url = r.headers.get("Location")
             continue
         if r.status_code == 200:
+            # Look for a t.me bot link with a start= param in the final page
+            tm_match = re.search(r'https?://t\.me/[^"\'\s<>]+', r.text)
+            if tm_match:
+                tm_url = tm_match.group(0)
+                decoded = decode_start_param(tm_url)
+                if decoded:
+                    return f"{tm_url} (decoded: {decoded})"
+                return tm_url
             js = _extract_js_redirect(r.text)
             if js and js != url:
                 url = js
