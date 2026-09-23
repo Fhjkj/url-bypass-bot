@@ -108,6 +108,7 @@ def lksfy_get_link(target_url, proxy=None, delay=12):
     """Run the 6-phase pure HTTP flow and return the final link.
 
     Uses the docker-configured SOLVER_API and BYPASS_PROXY_POOL env vars.
+    Handles both direct-redirect short links and Turnstile-protected flows.
     """
     session = requests.Session()
     ua = random.choice(USER_AGENTS)
@@ -133,16 +134,30 @@ def lksfy_get_link(target_url, proxy=None, delay=12):
     if proxy:
         session.proxies.update({"http": proxy, "https": proxy})
 
-    # PHASE 2: Inspect reverse-engineered web flow
-    resp = session.get("https://lksfy.com", timeout=30)
-    resp.raise_for_status()
-    parsed = parse_lksfy_html(resp.text)
+    # PHASE 2: Inspect reverse-engineered web flow on the target URL itself
+    resp = session.get(target_url, timeout=30, allow_redirects=False)
 
-    sitekey = parsed["sitekey"]
-    if not sitekey:
-        raise RuntimeError("Could not find Turnstile sitekey")
-    form_data = parsed["form_data"]
-    action = parsed["action"]
+    # PHASE 6 (early exit): Direct 302 redirect — follow to final link
+    if resp.status_code == 302:
+        return _follow_redirect_chain(session, resp.headers.get("Location"))
+
+    # Some short links return 200 with a JS meta-refresh or window.location
+    if resp.status_code == 200:
+        js_redirect = _extract_js_redirect(resp.text)
+        if js_redirect:
+            return _follow_redirect_chain(session, js_redirect)
+        # Check if the page itself has a Turnstile-protected form
+        parsed = parse_lksfy_html(resp.text)
+        sitekey = parsed["sitekey"]
+        form_data = parsed["form_data"]
+        action = parsed["action"]
+        if not sitekey:
+            raise RuntimeError(
+                f"No Turnstile sitekey on {target_url} and no redirect found. "
+                f"Status={resp.status_code} body={resp.text[:200]}"
+            )
+    else:
+        raise RuntimeError(f"Unexpected status {resp.status_code} for {target_url}")
 
     # PHASE 3: Solve Turnstile challenge via docker-configured solver API
     token = solve_turnstile_api(sitekey, proxy=proxy)
@@ -159,7 +174,7 @@ def lksfy_get_link(target_url, proxy=None, delay=12):
     if action.startswith("http"):
         submit_url = action
     else:
-        submit_url = "https://lksfy.com" + action
+        submit_url = target_url.rstrip("/") + "/" + action.lstrip("/")
 
     r = session.post(
         submit_url,
@@ -172,19 +187,55 @@ def lksfy_get_link(target_url, proxy=None, delay=12):
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
-            "Referer": "https://lksfy.com/",
+            "Referer": target_url,
         },
     )
 
     # PHASE 6: Final parse
     if r.status_code == 302:
-        return r.headers.get("Location")
+        return _follow_redirect_chain(session, r.headers.get("Location"))
     if r.status_code == 200:
         try:
             return r.json().get("url")
         except json.JSONDecodeError:
             pass
+        js_redirect = _extract_js_redirect(r.text)
+        if js_redirect:
+            return _follow_redirect_chain(session, js_redirect)
     raise RuntimeError(f"Unexpected response: {r.status_code} {r.text[:200]}")
+
+
+def _extract_js_redirect(html_text):
+    """Extract a window.location / meta-refresh URL from HTML, if present."""
+    m = re.search(r'window\.location\.href\s*=\s*["\']([^"\']+)["\']', html_text)
+    if m:
+        return m.group(1)
+    m = re.search(r'content\s*=\s*["\']\d+;\s*url\s*=\s*([^"\']+)["\']', html_text, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _follow_redirect_chain(session, first_location):
+    """Follow a chain of 301/302s (and JS redirects) until a final 200 page."""
+    if not first_location:
+        return None
+    visited = 0
+    url = first_location
+    while url and visited < 15:
+        visited += 1
+        r = session.get(url, timeout=30, allow_redirects=False)
+        if r.status_code in (301, 302):
+            url = r.headers.get("Location")
+            continue
+        if r.status_code == 200:
+            js = _extract_js_redirect(r.text)
+            if js and js != url:
+                url = js
+                continue
+            return r.url
+        url = None
+    return url
 
 
 if __name__ == "__main__":
