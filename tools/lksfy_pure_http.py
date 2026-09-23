@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""Pure HTTP method for lksfy.com following the 6-phase structure."""
+"""Pure HTTP method for lksfy.com following the 6-phase structure.
+
+Uses the docker-configured solver API (SOLVER_API env var) and proxy pool
+(BYPASS_PROXY_POOL env var) to solve Turnstile and avoid IP blocks.
+"""
 
 import json
+import os
 import random
+import re
 import time
 import requests
 from bs4 import BeautifulSoup
@@ -13,37 +19,44 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 ]
 
-PROXIES = []  # Optional: list of "http://user:pass@ip:port" strings
+
+def _configured_proxies():
+    """Read the BYPASS_PROXY_POOL env var (comma-separated URLs)."""
+    raw = os.getenv("BYPASS_PROXY_POOL", "")
+    return re.findall(r"https?://[^\s,'\"}]+", raw)
+
+
+def next_proxy():
+    """Return a sticky proxy from the pool, or None if unconfigured."""
+    from time import monotonic_ns
+    values = _configured_proxies()
+    if not values:
+        return None
+    return values[monotonic_ns() % len(values)]
+
+
+def solver_api():
+    """Return the configured solver API base URL."""
+    return os.getenv("SOLVER_API", "https://turnstile-solver-production-edc7.up.railway.app").rstrip("/")
 
 
 def solve_turnstile_api(sitekey, proxy=None):
-    """Solve Cloudflare Turnstile via 2CAPTCHA-compatible API."""
-    api_key = "YOUR_2CAPTCHA_API_KEY"  # Replace with real key
-    payload = {
-        "key": api_key,
-        "json": 1,
-        "action": "turnstile",
-        "sitekey": sitekey,
-        "url": "https://lksfy.com",
-    }
+    """Solve Cloudflare Turnstile via the docker-configured solver API."""
+    api = solver_api()
     proxies = {"http": proxy, "https": proxy} if proxy else None
-    r = requests.post("https://2captcha.com/in.php", data=payload, proxies=proxies)
+    payload = {
+        "siteurl": "https://lksfy.com",
+        "sitekey": sitekey,
+        "timeout": 30,
+    }
+    r = requests.post(f"{api}/solve-challenge", json=payload, proxies=proxies, timeout=15)
+    if r.status_code != 200:
+        raise RuntimeError(f"Solver API returned status {r.status_code}: {r.text[:200]}")
     data = r.json()
-    if data.get("status") != 1:
-        raise RuntimeError(f"Solver rejected: {data}")
-    captcha_id = data["request"]
-    for _ in range(60):
-        time.sleep(5)
-        poll = requests.get(
-            "https://2captcha.com/res.php",
-            params={"key": api_key, "action": "get", "id": captcha_id, "json": 1},
-            proxies=proxies,
-        ).json()
-        if poll.get("status") == 1:
-            return poll["request"]
-        if poll.get("request") in ("ERROR_BAD_TOKEN", "ERROR_CAPTCHA_UNSOLVABLE"):
-            raise RuntimeError(poll["request"])
-    raise RuntimeError("Turnstile solve timed out")
+    token = data.get("token") or data.get("cf-turnstile-response") or data.get("response")
+    if not token:
+        raise RuntimeError(f"Solver API response missing token: {data}")
+    return token
 
 
 def extract_turnstile_sitekey(soup):
@@ -53,7 +66,6 @@ def extract_turnstile_sitekey(soup):
         sitekey = widget.get("data-sitekey")
         if sitekey:
             return sitekey
-    # Fallback: any element with data-sitekey
     elem = soup.find(attrs={"data-sitekey": True})
     return elem.get("data-sitekey") if elem else None
 
@@ -76,7 +88,6 @@ def parse_lksfy_html(html_text):
     action = ""
     if form:
         action = form.get("action", "")
-        # Harvest every hidden input field inside the main form automatically
         for inp in form.find_all("input", {"type": "hidden"}):
             name = inp.get("name")
             value = inp.get("value", "")
@@ -93,8 +104,11 @@ def parse_lksfy_html(html_text):
     }
 
 
-def lksfy_get_link(target_url, api_key=None, proxy=None, delay=12):
-    """Run the 6-phase pure HTTP flow and return the final link."""
+def lksfy_get_link(target_url, proxy=None, delay=12):
+    """Run the 6-phase pure HTTP flow and return the final link.
+
+    Uses the docker-configured SOLVER_API and BYPASS_PROXY_POOL env vars.
+    """
     session = requests.Session()
     ua = random.choice(USER_AGENTS)
     session.headers.update(
@@ -112,6 +126,10 @@ def lksfy_get_link(target_url, api_key=None, proxy=None, delay=12):
             "Cache-Control": "max-age=0",
         }
     )
+
+    # PHASE 1: Initialize session with sticky proxy from pool
+    if proxy is None:
+        proxy = next_proxy()
     if proxy:
         session.proxies.update({"http": proxy, "https": proxy})
 
@@ -126,10 +144,10 @@ def lksfy_get_link(target_url, api_key=None, proxy=None, delay=12):
     form_data = parsed["form_data"]
     action = parsed["action"]
 
-    # PHASE 3: Solve Turnstile challenge via API
+    # PHASE 3: Solve Turnstile challenge via docker-configured solver API
     token = solve_turnstile_api(sitekey, proxy=proxy)
 
-    # PHASE 4: Timing bypass
+    # PHASE 4: The timing bypass
     time.sleep(delay)
 
     # PHASE 5: Execute final handshake
@@ -172,10 +190,8 @@ def lksfy_get_link(target_url, api_key=None, proxy=None, delay=12):
 if __name__ == "__main__":
     import sys
     target = sys.argv[1] if len(sys.argv) > 1 else "https://lksfy.com/UFMfmoi"
-    api = sys.argv[2] if len(sys.argv) > 2 else None
-    px = sys.argv[3] if len(sys.argv) > 3 else None
     try:
-        link = lksfy_get_link(target, api_key=api, proxy=px)
+        link = lksfy_get_link(target)
         print(link)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
