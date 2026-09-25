@@ -15,7 +15,7 @@ from pyrogram.types import (
 )
 from pyrogram.enums import MessageEntityType
 from pyrogram.enums import ParseMode
-from pyrogram.errors import QueryIdInvalid
+from pyrogram.errors import FloodWait, QueryIdInvalid
 
 from FZBypass import Config, Bypass, BOT_START, LOGGER
 from FZBypass.core.bypass_checker import direct_link_checker, is_excep_link
@@ -31,17 +31,23 @@ SOCIAL_MAX_FILES = max(1, min(50, int(os.getenv("SOCIAL_MAX_FILES", "20"))))
 SOCIAL_SEND_AS_DOCUMENT = os.getenv("SOCIAL_SEND_AS_DOCUMENT", "false").lower() not in {"0", "false", "no", "off"}
 SOCIAL_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 SOCIAL_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".ts", ".avi", ".flv"}
+SOCIAL_STATUS_EDIT_INTERVAL_SECONDS = 4.0
 
 
 async def _upload_progress(current: int, total: int, wait_msg, state: dict[str, float], label: str):
     percent = int(max(0, min(100, current * 100 / total))) if total else 0
     now = monotonic()
-    if percent == state.get("percent", -1) and now - state.get("updated_at", 0) < 1:
+    if now < state.get("disabled_until", 0):
+        return
+    if now - state.get("updated_at", 0) < SOCIAL_STATUS_EDIT_INTERVAL_SECONDS:
         return
     state["percent"] = percent
     state["updated_at"] = now
     try:
         await wait_msg.edit(f"<i>⬆️ Uploading {label}... {percent}%</i>")
+    except FloodWait as error:
+        state["disabled_until"] = now + max(60, int(getattr(error, "value", 60)))
+        LOGGER.warning("Telegram flood limit reached for upload status; pausing edits")
     except Exception:
         pass
 
@@ -115,6 +121,8 @@ async def social_media_photos(client, message):
         )
         try:
             await wait_msg.edit("<i>📷 Downloading original media... 100%</i>")
+        except FloodWait:
+            pass
         except Exception:
             pass
         files = result.files[:SOCIAL_MAX_FILES]
@@ -175,7 +183,10 @@ async def social_media_photos(client, message):
         await wait_msg.delete()
     except Exception as error:
         LOGGER.warning("Social media download failed for %s: %s", urls[0], error)
-        await wait_msg.edit(f"❌ Could not download the public media: {escape(str(error), quote=True)}")
+        try:
+            await wait_msg.edit(f"❌ Could not download the public media: {escape(str(error), quote=True)}")
+        except Exception:
+            pass
     finally:
         status_task.cancel()
         if root is not None:
@@ -184,15 +195,22 @@ async def social_media_photos(client, message):
 
 async def _social_progress_status(wait_msg, progress: dict[str, float], download_task) -> None:
     last_percent = -1
+    last_edit = 0.0
+    disabled_until = 0.0
     while not download_task.done():
+        now = monotonic()
         percent = max(0, min(99, int(progress.get("percent", 0))))
-        if percent != last_percent:
+        if percent != last_percent and now >= disabled_until and now - last_edit >= SOCIAL_STATUS_EDIT_INTERVAL_SECONDS:
             try:
                 await wait_msg.edit(f"<i>📷 Downloading original media... {percent}%</i>")
                 last_percent = percent
+                last_edit = now
+            except FloodWait as error:
+                disabled_until = now + max(60, int(getattr(error, "value", 60)))
+                LOGGER.warning("Telegram flood limit reached for download status; pausing edits")
             except Exception:
                 pass
-        await asleep(1.5)
+        await asleep(SOCIAL_STATUS_EDIT_INTERVAL_SECONDS)
 
 
 @Bypass.on_message(BypassFilter & (user(Config.OWNER_ID) | AuthChatsTopics))
