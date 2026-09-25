@@ -29,6 +29,17 @@ BYPASS_TASK_TIMEOUT_SECONDS = max(70, int(os.getenv("BYPASS_TASK_TIMEOUT_SECONDS
 SOCIAL_MEDIA_TIMEOUT_SECONDS = max(30, int(os.getenv("SOCIAL_MEDIA_TIMEOUT_SECONDS", "120")))
 SOCIAL_MAX_FILES = max(1, min(50, int(os.getenv("SOCIAL_MAX_FILES", "20"))))
 SOCIAL_SEND_AS_DOCUMENT = os.getenv("SOCIAL_SEND_AS_DOCUMENT", "false").lower() not in {"0", "false", "no", "off"}
+SOCIAL_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+
+async def _send_social_file(message, path: Path, caption: str | None = None):
+    """Prefer a rendered photo, but fall back to a document for Telegram-incompatible bytes."""
+    if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS and not SOCIAL_SEND_AS_DOCUMENT:
+        try:
+            return await message.reply_photo(str(path), caption=caption, quote=True)
+        except Exception as error:
+            LOGGER.warning("Telegram photo upload failed for %s; retrying as document: %s", path, error)
+    return await message.reply_document(str(path), caption=caption, quote=True)
 
 
 @Bypass.on_message(command("start"))
@@ -87,21 +98,28 @@ async def social_media_photos(client, message):
                         media=media,
                         reply_to_message_id=message.id,
                     )
-        elif all(path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".heic"} for path in files):
+        elif all(path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS for path in files) and not SOCIAL_SEND_AS_DOCUMENT:
             for start in range(0, len(files), 10):
                 batch = files[start : start + 10]
                 if len(batch) == 1:
-                    await message.reply_photo(str(batch[0]), caption=caption if start == 0 else None, quote=True)
+                    await _send_social_file(message, batch[0], caption if start == 0 else None)
                 else:
                     media = [
                         InputMediaPhoto(str(path), caption=caption if index == 0 and start == 0 else None)
                         for index, path in enumerate(batch)
                     ]
-                    await client.send_media_group(
-                        chat_id=message.chat.id,
-                        media=media,
-                        reply_to_message_id=message.id,
-                    )
+                    try:
+                        await client.send_media_group(
+                            chat_id=message.chat.id,
+                            media=media,
+                            reply_to_message_id=message.id,
+                        )
+                    except Exception as error:
+                        LOGGER.warning("Telegram photo album upload failed; retrying as documents: %s", error)
+                        for index, path in enumerate(batch):
+                            await message.reply_document(
+                                str(path), caption=caption if index == 0 and start == 0 else None, quote=True
+                            )
         else:
             for path in files:
                 await message.reply_document(str(path), caption=caption if path == files[0] else None, quote=True)
