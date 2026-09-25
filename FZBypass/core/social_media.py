@@ -8,11 +8,14 @@ environment variables and are used as normal transport fallbacks.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
+import json
 import os
 import re
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,6 +49,69 @@ class SocialMediaResult:
     title: str
     files: list[Path]
     is_photo_post: bool
+
+
+SOCIAL_CACHE_DIR = Path(os.getenv("SOCIAL_MEDIA_CACHE_DIR", "/tmp/fzbypass-social-cache"))
+SOCIAL_CACHE_TTL_SECONDS = max(60, int(os.getenv("SOCIAL_MEDIA_CACHE_TTL_SECONDS", "86400")))
+
+
+def _cache_path(url: str) -> Path:
+    key = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()
+    return SOCIAL_CACHE_DIR / key
+
+
+def _load_cached(url: str, root: Path, progress: dict[str, float] | None = None) -> SocialMediaResult | None:
+    entry = _cache_path(url)
+    manifest_path = entry / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+        if time.time() - float(manifest.get("cached_at", 0)) > SOCIAL_CACHE_TTL_SECONDS:
+            shutil.rmtree(entry, ignore_errors=True)
+            return None
+        cached_files = [entry / name for name in manifest.get("files", [])]
+        if not cached_files or not all(path.is_file() for path in cached_files):
+            shutil.rmtree(entry, ignore_errors=True)
+            return None
+        root.mkdir(parents=True, exist_ok=True)
+        files = []
+        for path in cached_files:
+            destination = root / path.name
+            shutil.copy2(path, destination)
+            files.append(destination)
+        if progress is not None:
+            progress["percent"] = 100.0
+        return SocialMediaResult(
+            source_url=str(manifest.get("source_url") or url),
+            title=str(manifest.get("title") or "Social media media"),
+            files=files,
+            is_photo_post=bool(manifest.get("is_photo_post")),
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def _store_cached(result: SocialMediaResult, cache_url: str) -> None:
+    entry = _cache_path(cache_url)
+    temporary = entry.with_name(f"{entry.name}.tmp-{os.getpid()}")
+    try:
+        shutil.rmtree(temporary, ignore_errors=True)
+        temporary.mkdir(parents=True, exist_ok=True)
+        cached_names = []
+        for path in result.files:
+            destination = temporary / path.name
+            shutil.copy2(path, destination)
+            cached_names.append(path.name)
+        (temporary / "manifest.json").write_text(json.dumps({
+            "source_url": result.source_url,
+            "title": result.title,
+            "is_photo_post": result.is_photo_post,
+            "files": cached_names,
+            "cached_at": time.time(),
+        }))
+        shutil.rmtree(entry, ignore_errors=True)
+        temporary.rename(entry)
+    except OSError:
+        shutil.rmtree(temporary, ignore_errors=True)
 
 
 def find_social_urls(text: str | None) -> list[str]:
@@ -249,7 +315,11 @@ def _download_sync(url: str, root: Path, progress: dict[str, float] | None = Non
 async def download_social_media(url: str, progress: dict[str, float] | None = None) -> tuple[SocialMediaResult, Path]:
     root = Path(tempfile.mkdtemp(prefix="fzbypass-social-"))
     try:
+        cached = await asyncio.to_thread(_load_cached, url, root, progress)
+        if cached is not None:
+            return cached, root
         result = await asyncio.to_thread(_download_sync, url, root, progress)
+        await asyncio.to_thread(_store_cached, result, url)
         return result, root
     except Exception:
         shutil.rmtree(root, ignore_errors=True)
