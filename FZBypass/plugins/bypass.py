@@ -105,7 +105,12 @@ async def channel_placeholder(_, query):
 @Bypass.on_message((user(Config.OWNER_ID) | AuthChatsTopics) & filters.regex(r"(?i)https?://(?:www\.)?(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch|instagram\.com)/"))
 async def social_media_photos(client, message):
     """Send public TikTok/Facebook media without re-encoding the source files."""
-    urls = find_social_urls(message.text or message.caption)
+    message_text = message.text or message.caption or ""
+    # /bypass and /bp are handled by the generic resolver; do not run this
+    # social-media handler a second time for the same Telegram update.
+    if message_text.lstrip().lower().startswith(("/bypass", "/bp")):
+        return
+    urls = find_social_urls(message_text)
     if not urls:
         return
 
