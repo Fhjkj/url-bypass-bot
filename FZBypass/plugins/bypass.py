@@ -10,19 +10,23 @@ from pyrogram.types import (
     InlineKeyboardMarkup,
     InlineQueryResultArticle,
     InputTextMessageContent,
+    InputMediaPhoto,
 )
 from pyrogram.enums import MessageEntityType
 from pyrogram.enums import ParseMode
 from pyrogram.errors import QueryIdInvalid
 
-from FZBypass import Config, Bypass, BOT_START
+from FZBypass import Config, Bypass, BOT_START, LOGGER
 from FZBypass.core.bypass_checker import direct_link_checker, is_excep_link
 from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import GofileResult
 from FZBypass.core.provider_scrapers import ProviderFileResult
 from FZBypass.core.bot_utils import AuthChatsTopics, convert_time, BypassFilter
+from FZBypass.core.social_media import cleanup_social_media, download_social_media, find_social_urls
 
 BYPASS_TASK_TIMEOUT_SECONDS = max(70, int(os.getenv("BYPASS_TASK_TIMEOUT_SECONDS", "150")))
+SOCIAL_MEDIA_TIMEOUT_SECONDS = max(30, int(os.getenv("SOCIAL_MEDIA_TIMEOUT_SECONDS", "120")))
+SOCIAL_MAX_FILES = max(1, min(50, int(os.getenv("SOCIAL_MAX_FILES", "20"))))
 
 
 @Bypass.on_message(command("start"))
@@ -46,6 +50,52 @@ async def start_msg(client, message):
 @Bypass.on_callback_query(filters.regex("^start_channel_placeholder$"))
 async def channel_placeholder(_, query):
     await query.answer()
+
+
+@Bypass.on_message((user(Config.OWNER_ID) | AuthChatsTopics) & filters.regex(r"(?i)https?://(?:www\.)?(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch)/"))
+async def social_media_photos(client, message):
+    """Send public TikTok/Facebook media without re-encoding the source files."""
+    urls = find_social_urls(message.text or message.caption)
+    if not urls:
+        return
+
+    wait_msg = await message.reply("<i>📷 Downloading original media...</i>", quote=True)
+    root = None
+    try:
+        result, root = await wait_for(
+            download_social_media(urls[0]), timeout=SOCIAL_MEDIA_TIMEOUT_SECONDS
+        )
+        files = result.files[:SOCIAL_MAX_FILES]
+        if not files:
+            raise RuntimeError("No media files were found")
+
+        caption = f"📷 <b>{escape(result.title, quote=True)}</b>\n\n✅ Original source file"
+        if all(path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".heic"} for path in files):
+            for start in range(0, len(files), 10):
+                batch = files[start : start + 10]
+                if len(batch) == 1:
+                    await message.reply_photo(str(batch[0]), caption=caption if start == 0 else None, quote=True)
+                else:
+                    media = [
+                        InputMediaPhoto(str(path), caption=caption if index == 0 and start == 0 else None)
+                        for index, path in enumerate(batch)
+                    ]
+                    await client.send_media_group(
+                        chat_id=message.chat.id,
+                        media=media,
+                        reply_to_message_id=message.id,
+                    )
+        else:
+            for path in files:
+                await message.reply_document(str(path), caption=caption if path == files[0] else None, quote=True)
+
+        await wait_msg.delete()
+    except Exception as error:
+        LOGGER.warning("Social media download failed for %s: %s", urls[0], error)
+        await wait_msg.edit(f"❌ Could not download the public media: {escape(str(error), quote=True)}")
+    finally:
+        if root is not None:
+            cleanup_social_media(root)
 
 
 @Bypass.on_message(BypassFilter & (user(Config.OWNER_ID) | AuthChatsTopics))
