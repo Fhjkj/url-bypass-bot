@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import os
 import re
 import shutil
 import tempfile
@@ -77,8 +78,14 @@ def _proxy_options(proxy: str | None) -> dict[str, str] | None:
 
 
 def _candidate_proxies() -> list[str | None]:
-    # Direct access is always tried first. Runtime env values are optional.
-    return [None, *configured_proxies()]
+    configured = configured_proxies()
+    proxy_only = os.getenv("SOCIAL_PROXY_ONLY", "true").lower() in {"1", "true", "yes", "on"}
+    if proxy_only:
+        if not configured:
+            raise RuntimeError("SOCIAL_PROXY_ONLY is enabled but no BYPASS_PROXY_POOL/BYPASS_PROXY_URL is configured")
+        return configured
+    # Direct access is the default; configured runtime proxies are fallbacks.
+    return [None, *configured]
 
 
 def _yt_dlp_download(url: str, root: Path, proxy: str | None) -> SocialMediaResult:
