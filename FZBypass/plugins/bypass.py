@@ -90,6 +90,10 @@ async def social_media_photos(client, message):
         result, root = await wait_for(
             download_task, timeout=SOCIAL_MEDIA_TIMEOUT_SECONDS
         )
+        try:
+            await wait_msg.edit("<i>📷 Downloading original media... 100%</i>")
+        except Exception:
+            pass
         files = result.files[:SOCIAL_MAX_FILES]
         if not files:
             raise RuntimeError("No media files were found")
