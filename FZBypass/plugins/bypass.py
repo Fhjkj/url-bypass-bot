@@ -11,6 +11,7 @@ from pyrogram.types import (
     InlineQueryResultArticle,
     InputTextMessageContent,
     InputMediaPhoto,
+    InputMediaDocument,
 )
 from pyrogram.enums import MessageEntityType
 from pyrogram.enums import ParseMode
@@ -27,6 +28,7 @@ from FZBypass.core.social_media import cleanup_social_media, download_social_med
 BYPASS_TASK_TIMEOUT_SECONDS = max(70, int(os.getenv("BYPASS_TASK_TIMEOUT_SECONDS", "150")))
 SOCIAL_MEDIA_TIMEOUT_SECONDS = max(30, int(os.getenv("SOCIAL_MEDIA_TIMEOUT_SECONDS", "120")))
 SOCIAL_MAX_FILES = max(1, min(50, int(os.getenv("SOCIAL_MAX_FILES", "20"))))
+SOCIAL_SEND_AS_DOCUMENT = os.getenv("SOCIAL_SEND_AS_DOCUMENT", "true").lower() not in {"0", "false", "no", "off"}
 
 
 @Bypass.on_message(command("start"))
@@ -70,7 +72,22 @@ async def social_media_photos(client, message):
             raise RuntimeError("No media files were found")
 
         caption = f"📷 <b>{escape(result.title, quote=True)}</b>\n\n✅ Original source file"
-        if all(path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".heic"} for path in files):
+        if SOCIAL_SEND_AS_DOCUMENT:
+            for start in range(0, len(files), 10):
+                batch = files[start : start + 10]
+                if len(batch) == 1:
+                    await message.reply_document(str(batch[0]), caption=caption if start == 0 else None, quote=True)
+                else:
+                    media = [
+                        InputMediaDocument(str(path), caption=caption if index == 0 and start == 0 else None)
+                        for index, path in enumerate(batch)
+                    ]
+                    await client.send_media_group(
+                        chat_id=message.chat.id,
+                        media=media,
+                        reply_to_message_id=message.id,
+                    )
+        elif all(path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".heic"} for path in files):
             for start in range(0, len(files), 10):
                 batch = files[start : start + 10]
                 if len(batch) == 1:
