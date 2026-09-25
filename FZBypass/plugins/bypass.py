@@ -30,7 +30,7 @@ SOCIAL_MEDIA_TIMEOUT_SECONDS = max(30, int(os.getenv("SOCIAL_MEDIA_TIMEOUT_SECON
 SOCIAL_MAX_FILES = max(1, min(50, int(os.getenv("SOCIAL_MAX_FILES", "20"))))
 SOCIAL_SEND_AS_DOCUMENT = os.getenv("SOCIAL_SEND_AS_DOCUMENT", "false").lower() not in {"0", "false", "no", "off"}
 SOCIAL_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
-SOCIAL_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
+SOCIAL_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".ts", ".avi", ".flv"}
 
 
 async def _send_social_video(message, path: Path, caption: str | None = None):
@@ -136,9 +136,15 @@ async def social_media_photos(client, message):
                             await message.reply_document(
                                 str(path), caption=caption if index == 0 and start == 0 else None, quote=True
                             )
-        elif all(path.suffix.lower() in SOCIAL_VIDEO_EXTENSIONS for path in files):
+        elif any(path.suffix.lower() in SOCIAL_VIDEO_EXTENSIONS for path in files):
+            # Send video files natively like Facebook. Only non-video leftovers
+            # use document upload; never wrap a video in an archive-style upload.
             for path in files:
-                await _send_social_video(message, path, caption if path == files[0] else None)
+                item_caption = caption if path == files[0] else None
+                if path.suffix.lower() in SOCIAL_VIDEO_EXTENSIONS:
+                    await _send_social_video(message, path, item_caption)
+                else:
+                    await message.reply_document(str(path), caption=item_caption, quote=True)
         else:
             for path in files:
                 await message.reply_document(str(path), caption=caption if path == files[0] else None, quote=True)

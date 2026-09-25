@@ -115,6 +115,9 @@ def _yt_dlp_download(url: str, root: Path, proxy: str | None, progress: dict[str
         "ignoreerrors": False,
         "overwrites": True,
         "cachedir": False,
+        "socket_timeout": int(os.getenv("SOCIAL_SOCKET_TIMEOUT_SECONDS", "20")),
+        "retries": 1,
+        "fragment_retries": 1,
         "progress_hooks": [progress_hook],
     }
     if proxy:
