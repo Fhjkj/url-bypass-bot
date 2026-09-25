@@ -88,18 +88,34 @@ def _candidate_proxies() -> list[str | None]:
     return [None, *configured]
 
 
-def _yt_dlp_download(url: str, root: Path, proxy: str | None) -> SocialMediaResult:
+def _yt_dlp_download(url: str, root: Path, proxy: str | None, progress: dict[str, float] | None = None) -> SocialMediaResult:
     output_template = str(root / "%(autonumber)03d-%(id)s.%(ext)s")
+    is_instagram = "instagram.com" in url.lower()
+
+    def progress_hook(status: dict[str, Any]) -> None:
+        if progress is None:
+            return
+        if status.get("status") == "downloading":
+            downloaded = status.get("downloaded_bytes") or 0
+            total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
+            if total:
+                progress["percent"] = max(0.0, min(99.0, downloaded * 100.0 / total))
+        elif status.get("status") == "finished":
+            progress["percent"] = max(progress.get("percent", 0.0), 99.0)
+
     options = {
         "quiet": True,
         "no_warnings": True,
-        "noplaylist": False,
-        "format": "best",
+        # A Reel/post URL must produce one video, not a playlist/archive.
+        "noplaylist": is_instagram,
+        "format": "bestvideo*+bestaudio/best",
+        "merge_output_format": "mp4",
         "outtmpl": output_template,
         "restrictfilenames": True,
         "ignoreerrors": False,
         "overwrites": True,
         "cachedir": False,
+        "progress_hooks": [progress_hook],
     }
     if proxy:
         options["proxy"] = proxy
@@ -114,6 +130,8 @@ def _yt_dlp_download(url: str, root: Path, proxy: str | None) -> SocialMediaResu
         )
         ydl.download([url])
 
+    if progress is not None:
+        progress["percent"] = 100.0
     return _result_from_files(url, root, info, is_photo_post)
 
 
@@ -164,7 +182,7 @@ def _extension_from_response(response: requests.Response, image_url: str) -> str
     return suffix if suffix in IMAGE_EXTENSIONS else ".jpg"
 
 
-def _metadata_photo_download(url: str, root: Path, proxy: str | None) -> SocialMediaResult:
+def _metadata_photo_download(url: str, root: Path, proxy: str | None, progress: dict[str, float] | None = None) -> SocialMediaResult:
     headers = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml",
@@ -182,7 +200,8 @@ def _metadata_photo_download(url: str, root: Path, proxy: str | None) -> SocialM
 
     root.mkdir(parents=True, exist_ok=True)
     downloaded: list[Path] = []
-    for index, image_url in enumerate(image_urls[:50], start=1):
+    image_candidates = image_urls[:50]
+    for index, image_url in enumerate(image_candidates, start=1):
         image_response = requests.get(
             image_url,
             headers={"User-Agent": headers["User-Agent"], "Referer": response.url},
@@ -194,24 +213,28 @@ def _metadata_photo_download(url: str, root: Path, proxy: str | None) -> SocialM
         destination = root / f"{index:03d}-photo{_extension_from_response(image_response, image_url)}"
         destination.write_bytes(image_response.content)
         downloaded.append(destination)
+        if progress is not None:
+            progress["percent"] = min(99.0, index * 100.0 / max(1, len(image_candidates)))
 
     if not downloaded:
         raise RuntimeError("The public page exposed no downloadable images")
+    if progress is not None:
+        progress["percent"] = 100.0
     return SocialMediaResult(response.url, "Social media photos", downloaded, True)
 
 
-def _download_sync(url: str, root: Path) -> SocialMediaResult:
+def _download_sync(url: str, root: Path, progress: dict[str, float] | None = None) -> SocialMediaResult:
     last_error: Exception | None = None
     is_tiktok = "tiktok.com" in url.lower()
     for proxy in _candidate_proxies():
         try:
             if not is_tiktok:
-                return _yt_dlp_download(url, root, proxy)
+                return _yt_dlp_download(url, root, proxy, progress)
             try:
-                return _yt_dlp_download(url, root, proxy)
+                return _yt_dlp_download(url, root, proxy, progress)
             except Exception as error:
                 last_error = error
-                return _metadata_photo_download(url, root, proxy)
+                return _metadata_photo_download(url, root, proxy, progress)
         except Exception as error:
             last_error = error
             for path in root.iterdir():
@@ -220,10 +243,10 @@ def _download_sync(url: str, root: Path) -> SocialMediaResult:
     raise RuntimeError(str(last_error) if last_error else "No downloadable media was found")
 
 
-async def download_social_media(url: str) -> tuple[SocialMediaResult, Path]:
+async def download_social_media(url: str, progress: dict[str, float] | None = None) -> tuple[SocialMediaResult, Path]:
     root = Path(tempfile.mkdtemp(prefix="fzbypass-social-"))
     try:
-        result = await asyncio.to_thread(_download_sync, url, root)
+        result = await asyncio.to_thread(_download_sync, url, root, progress)
         return result, root
     except Exception:
         shutil.rmtree(root, ignore_errors=True)

@@ -30,6 +30,15 @@ SOCIAL_MEDIA_TIMEOUT_SECONDS = max(30, int(os.getenv("SOCIAL_MEDIA_TIMEOUT_SECON
 SOCIAL_MAX_FILES = max(1, min(50, int(os.getenv("SOCIAL_MAX_FILES", "20"))))
 SOCIAL_SEND_AS_DOCUMENT = os.getenv("SOCIAL_SEND_AS_DOCUMENT", "false").lower() not in {"0", "false", "no", "off"}
 SOCIAL_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+SOCIAL_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
+
+
+async def _send_social_video(message, path: Path, caption: str | None = None):
+    try:
+        return await message.reply_video(str(path), caption=caption, quote=True, supports_streaming=True)
+    except Exception as error:
+        LOGGER.warning("Telegram video upload failed for %s; retrying as document: %s", path, error)
+        return await message.reply_document(str(path), caption=caption, quote=True)
 
 
 async def _send_social_file(message, path: Path, caption: str | None = None):
@@ -72,11 +81,14 @@ async def social_media_photos(client, message):
     if not urls:
         return
 
-    wait_msg = await message.reply("<i>📷 Downloading original media...</i>", quote=True)
+    wait_msg = await message.reply("<i>📷 Downloading original media... 0%</i>", quote=True)
     root = None
+    progress = {"percent": 0.0}
+    download_task = create_task(download_social_media(urls[0], progress))
+    status_task = create_task(_social_progress_status(wait_msg, progress, download_task))
     try:
         result, root = await wait_for(
-            download_social_media(urls[0]), timeout=SOCIAL_MEDIA_TIMEOUT_SECONDS
+            download_task, timeout=SOCIAL_MEDIA_TIMEOUT_SECONDS
         )
         files = result.files[:SOCIAL_MAX_FILES]
         if not files:
@@ -120,6 +132,9 @@ async def social_media_photos(client, message):
                             await message.reply_document(
                                 str(path), caption=caption if index == 0 and start == 0 else None, quote=True
                             )
+        elif all(path.suffix.lower() in SOCIAL_VIDEO_EXTENSIONS for path in files):
+            for path in files:
+                await _send_social_video(message, path, caption if path == files[0] else None)
         else:
             for path in files:
                 await message.reply_document(str(path), caption=caption if path == files[0] else None, quote=True)
@@ -129,8 +144,22 @@ async def social_media_photos(client, message):
         LOGGER.warning("Social media download failed for %s: %s", urls[0], error)
         await wait_msg.edit(f"❌ Could not download the public media: {escape(str(error), quote=True)}")
     finally:
+        status_task.cancel()
         if root is not None:
             cleanup_social_media(root)
+
+
+async def _social_progress_status(wait_msg, progress: dict[str, float], download_task) -> None:
+    last_percent = -1
+    while not download_task.done():
+        percent = max(0, min(99, int(progress.get("percent", 0))))
+        if percent != last_percent:
+            try:
+                await wait_msg.edit(f"<i>📷 Downloading original media... {percent}%</i>")
+                last_percent = percent
+            except Exception:
+                pass
+        await asleep(1.5)
 
 
 @Bypass.on_message(BypassFilter & (user(Config.OWNER_ID) | AuthChatsTopics))
