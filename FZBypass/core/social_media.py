@@ -17,7 +17,7 @@ from yt_dlp import YoutubeDL
 
 
 SOCIAL_URL_RE = re.compile(
-    r"https?://(?:www\.)?(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch)/[^\s<>]+",
+    r"https?://(?:www\.)?(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch|instagram\.com)/[^\s<>]+",
     re.IGNORECASE,
 )
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".heic"}

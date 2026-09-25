@@ -54,7 +54,7 @@ async def channel_placeholder(_, query):
     await query.answer()
 
 
-@Bypass.on_message((user(Config.OWNER_ID) | AuthChatsTopics) & filters.regex(r"(?i)https?://(?:www\.)?(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch)/"))
+@Bypass.on_message((user(Config.OWNER_ID) | AuthChatsTopics) & filters.regex(r"(?i)https?://(?:www\.)?(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch|instagram\.com)/"))
 async def social_media_photos(client, message):
     """Send public TikTok/Facebook media without re-encoding the source files."""
     urls = find_social_urls(message.text or message.caption)
