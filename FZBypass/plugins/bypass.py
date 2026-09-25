@@ -28,7 +28,7 @@ from FZBypass.core.social_media import cleanup_social_media, download_social_med
 BYPASS_TASK_TIMEOUT_SECONDS = max(70, int(os.getenv("BYPASS_TASK_TIMEOUT_SECONDS", "150")))
 SOCIAL_MEDIA_TIMEOUT_SECONDS = max(30, int(os.getenv("SOCIAL_MEDIA_TIMEOUT_SECONDS", "120")))
 SOCIAL_MAX_FILES = max(1, min(50, int(os.getenv("SOCIAL_MAX_FILES", "20"))))
-SOCIAL_SEND_AS_DOCUMENT = os.getenv("SOCIAL_SEND_AS_DOCUMENT", "true").lower() not in {"0", "false", "no", "off"}
+SOCIAL_SEND_AS_DOCUMENT = os.getenv("SOCIAL_SEND_AS_DOCUMENT", "false").lower() not in {"0", "false", "no", "off"}
 
 
 @Bypass.on_message(command("start"))
