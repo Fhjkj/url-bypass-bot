@@ -1,5 +1,5 @@
 import os
-from time import time
+from time import monotonic, time
 from html import escape
 from pathlib import Path
 from asyncio import create_task, gather, sleep as asleep, wait_for
@@ -33,22 +33,44 @@ SOCIAL_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 SOCIAL_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".ts", ".avi", ".flv"}
 
 
-async def _send_social_video(message, path: Path, caption: str | None = None):
+async def _upload_progress(current: int, total: int, wait_msg, state: dict[str, float], label: str):
+    percent = int(max(0, min(100, current * 100 / total))) if total else 0
+    now = monotonic()
+    if percent == state.get("percent", -1) and now - state.get("updated_at", 0) < 1:
+        return
+    state["percent"] = percent
+    state["updated_at"] = now
     try:
-        return await message.reply_video(str(path), caption=caption, quote=True, supports_streaming=True)
+        await wait_msg.edit(f"<i>⬆️ Uploading {label}... {percent}%</i>")
+    except Exception:
+        pass
+
+
+async def _send_social_video(message, path: Path, caption: str | None = None, wait_msg=None, upload_state=None):
+    upload_kwargs = {}
+    if wait_msg is not None:
+        upload_kwargs = {"progress": _upload_progress, "progress_args": (wait_msg, upload_state or {}, "video")}
+    try:
+        return await message.reply_video(str(path), caption=caption, quote=True, supports_streaming=True, **upload_kwargs)
     except Exception as error:
         LOGGER.warning("Telegram video upload failed for %s; retrying as document: %s", path, error)
-        return await message.reply_document(str(path), caption=caption, quote=True)
+        document_kwargs = {}
+        if wait_msg is not None:
+            document_kwargs = {"progress": _upload_progress, "progress_args": (wait_msg, upload_state or {}, "file")}
+        return await message.reply_document(str(path), caption=caption, quote=True, **document_kwargs)
 
 
-async def _send_social_file(message, path: Path, caption: str | None = None):
+async def _send_social_file(message, path: Path, caption: str | None = None, wait_msg=None, upload_state=None):
     """Prefer a rendered photo, but fall back to a document for Telegram-incompatible bytes."""
+    progress_kwargs = {}
+    if wait_msg is not None:
+        progress_kwargs = {"progress": _upload_progress, "progress_args": (wait_msg, upload_state or {}, "photo" if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS else "file")}
     if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS and not SOCIAL_SEND_AS_DOCUMENT:
         try:
-            return await message.reply_photo(str(path), caption=caption, quote=True)
+            return await message.reply_photo(str(path), caption=caption, quote=True, **progress_kwargs)
         except Exception as error:
             LOGGER.warning("Telegram photo upload failed for %s; retrying as document: %s", path, error)
-    return await message.reply_document(str(path), caption=caption, quote=True)
+    return await message.reply_document(str(path), caption=caption, quote=True, **progress_kwargs)
 
 
 @Bypass.on_message(command("start"))
@@ -84,6 +106,7 @@ async def social_media_photos(client, message):
     wait_msg = await message.reply("<i>📷 Downloading original media... 0%</i>", quote=True)
     root = None
     progress = {"percent": 0.0}
+    upload_state = {"percent": -1.0, "updated_at": 0.0}
     download_task = create_task(download_social_media(urls[0], progress))
     status_task = create_task(_social_progress_status(wait_msg, progress, download_task))
     try:
@@ -103,7 +126,7 @@ async def social_media_photos(client, message):
             for start in range(0, len(files), 10):
                 batch = files[start : start + 10]
                 if len(batch) == 1:
-                    await message.reply_document(str(batch[0]), caption=caption if start == 0 else None, quote=True)
+                    await _send_social_file(message, batch[0], caption if start == 0 else None, wait_msg, upload_state)
                 else:
                     media = [
                         InputMediaDocument(str(path), caption=caption if index == 0 and start == 0 else None)
@@ -118,7 +141,7 @@ async def social_media_photos(client, message):
             for start in range(0, len(files), 10):
                 batch = files[start : start + 10]
                 if len(batch) == 1:
-                    await _send_social_file(message, batch[0], caption if start == 0 else None)
+                    await _send_social_file(message, batch[0], caption if start == 0 else None, wait_msg, upload_state)
                 else:
                     media = [
                         InputMediaPhoto(str(path), caption=caption if index == 0 and start == 0 else None)
@@ -133,8 +156,8 @@ async def social_media_photos(client, message):
                     except Exception as error:
                         LOGGER.warning("Telegram photo album upload failed; retrying as documents: %s", error)
                         for index, path in enumerate(batch):
-                            await message.reply_document(
-                                str(path), caption=caption if index == 0 and start == 0 else None, quote=True
+                            await _send_social_file(
+                                message, path, caption if index == 0 and start == 0 else None, wait_msg, upload_state
                             )
         elif any(path.suffix.lower() in SOCIAL_VIDEO_EXTENSIONS for path in files):
             # Send video files natively like Facebook. Only non-video leftovers
@@ -142,12 +165,12 @@ async def social_media_photos(client, message):
             for path in files:
                 item_caption = caption if path == files[0] else None
                 if path.suffix.lower() in SOCIAL_VIDEO_EXTENSIONS:
-                    await _send_social_video(message, path, item_caption)
+                    await _send_social_video(message, path, item_caption, wait_msg, upload_state)
                 else:
-                    await message.reply_document(str(path), caption=item_caption, quote=True)
+                    await _send_social_file(message, path, item_caption, wait_msg, upload_state)
         else:
             for path in files:
-                await message.reply_document(str(path), caption=caption if path == files[0] else None, quote=True)
+                await _send_social_file(message, path, caption if path == files[0] else None, wait_msg, upload_state)
 
         await wait_msg.delete()
     except Exception as error:
