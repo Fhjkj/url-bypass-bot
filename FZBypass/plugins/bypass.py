@@ -1,3 +1,4 @@
+import io
 import os
 from time import monotonic, time
 from html import escape
@@ -33,6 +34,12 @@ SOCIAL_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 SOCIAL_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".ts", ".avi", ".flv"}
 SOCIAL_STATUS_EDIT_INTERVAL_SECONDS = 4.0
 SOCIAL_PHOTO_CAPTION = os.getenv("SOCIAL_PHOTO_CAPTION", "🎵 TikTok Photos\n\n━━━━━━━━━━━━\n\n⚡ Downloaded via @Bypass0_bot")
+
+
+def _photo_media(path: Path, caption: str | None = None) -> InputMediaPhoto:
+    stream = io.BytesIO(path.read_bytes())
+    stream.name = "photo.jpg"
+    return InputMediaPhoto(media=stream, caption=caption)
 
 
 async def _upload_progress(current: int, total: int, wait_msg, state: dict[str, float], label: str):
@@ -164,14 +171,14 @@ async def social_media_photos(client, message):
                         media=media,
                         reply_to_message_id=message.id,
                     )
-        elif all(path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS for path in files) and not SOCIAL_SEND_AS_DOCUMENT:
+        elif all(path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS for path in files):
             for start in range(0, len(files), 10):
                 batch = files[start : start + 10]
                 if len(batch) == 1:
                     await _send_social_file(message, batch[0], caption if start == 0 else None, wait_msg, upload_state)
                 else:
                     media = [
-                        InputMediaPhoto(str(path), caption=caption if index == 0 and start == 0 else None)
+                        _photo_media(path, caption if index == 0 and start == 0 else None)
                         for index, path in enumerate(batch)
                     ]
                     try:

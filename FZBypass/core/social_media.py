@@ -8,6 +8,7 @@ environment variables and are used as normal transport fallbacks.
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import html
 import json
@@ -385,23 +386,36 @@ def _tikwm_photo_download(url: str, root: Path, proxy: str | None, progress: dic
     if not isinstance(image_urls, list) or not image_urls:
         raise RuntimeError("TikWM did not return a public TikTok photo array")
     root.mkdir(parents=True, exist_ok=True)
+    candidates = [(index, image_url) for index, image_url in enumerate(image_urls[:50], start=1)
+                  if isinstance(image_url, str) and image_url.startswith(("http://", "https://"))]
+
+    def fetch_image(item: tuple[int, str]) -> tuple[int, bytes] | None:
+        index, image_url = item
+        try:
+            image_response = requests.get(
+                image_url,
+                headers={"User-Agent": headers["User-Agent"], "Referer": "https://www.tikwm.com/"},
+                proxies=_proxy_options(proxy),
+                timeout=timeout,
+            )
+            if image_response.status_code == 200 and image_response.content:
+                return index, image_response.content
+        except requests.RequestException:
+            return None
+        return None
+
     downloaded: list[Path] = []
-    for index, image_url in enumerate(image_urls[:50], start=1):
-        if not isinstance(image_url, str) or not image_url.startswith(("http://", "https://")):
-            continue
-        image_response = requests.get(
-            image_url,
-            headers={"User-Agent": headers["User-Agent"], "Referer": "https://www.tikwm.com/"},
-            proxies=_proxy_options(proxy),
-            timeout=timeout,
-        )
-        if image_response.status_code != 200 or not image_response.content:
-            continue
-        destination = root / f"{index:03d}-photo.jpg"
-        destination.write_bytes(image_response.content)
-        downloaded.append(destination)
-        if progress is not None:
-            progress["percent"] = min(99.0, index * 100.0 / max(1, len(image_urls)))
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(candidates)))) as pool:
+        for completed in pool.map(fetch_image, candidates):
+            if completed is None:
+                continue
+            index, content = completed
+            destination = root / f"{index:03d}-photo.jpg"
+            destination.write_bytes(content)
+            downloaded.append(destination)
+            if progress is not None:
+                progress["percent"] = min(99.0, len(downloaded) * 100.0 / max(1, len(candidates)))
+    downloaded.sort(key=lambda path: path.name)
     if not downloaded:
         raise RuntimeError("TikWM returned no downloadable TikTok photos")
     valid_images = _normalise_images(downloaded)
