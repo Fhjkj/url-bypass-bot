@@ -14,7 +14,7 @@ from pyrogram.types import (
     InputMediaPhoto,
     InputMediaDocument,
 )
-from pyrogram.enums import ChatType, MessageEntityType
+from pyrogram.enums import ChatType
 from pyrogram.enums import ParseMode
 from pyrogram.errors import BadRequest, FloodWait, QueryIdInvalid
 
@@ -24,13 +24,15 @@ from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import GofileResult
 from FZBypass.core.provider_scrapers import HubCloudPackResult, ProviderFileResult
 from FZBypass.core.bot_utils import (
-    AuthChatsTopics,
     BypassFilter,
+    BypassChatAccess,
     OwnerOrSudo,
     SocialMediaFilter,
+    classify_link,
     convert_time,
+    extract_message_links,
 )
-from FZBypass.core.social_media import cleanup_social_media, download_social_media, find_social_urls
+from FZBypass.core.social_media import cleanup_social_media, download_social_media
 
 BYPASS_TASK_TIMEOUT_SECONDS = max(70, int(os.getenv("BYPASS_TASK_TIMEOUT_SECONDS", "150")))
 SOCIAL_MEDIA_TIMEOUT_SECONDS = max(30, int(os.getenv("SOCIAL_MEDIA_TIMEOUT_SECONDS", "120")))
@@ -145,27 +147,13 @@ async def channel_placeholder(_, query):
     await query.answer()
 
 
-@Bypass.on_message(SocialMediaFilter & (OwnerOrSudo | AuthChatsTopics))
-async def social_media_photos(client, message):
-    """Send public TikTok/Facebook media without re-encoding the source files."""
-    message_text = message.text or message.caption or ""
-    if (
-        message.reply_to_message
-        and message_text.lstrip().lower().startswith(("/bypass", "/bp"))
-        and not find_social_urls(message_text)
-    ):
-        message_text = (
-            message.reply_to_message.text or message.reply_to_message.caption or ""
-        )
-    urls = find_social_urls(message_text)
-    if not urls:
-        return
-
+async def _process_social_media(client, message, url):
+    """Download and send one classified social-media URL."""
     wait_msg = await message.reply("<i>📷 Downloading original media... 0%</i>", quote=True)
     root = None
     progress = {"percent": 0.0}
     upload_state = {"percent": -1.0, "updated_at": 0.0}
-    download_task = create_task(download_social_media(urls[0], progress))
+    download_task = create_task(download_social_media(url, progress))
     status_task = create_task(_social_progress_status(wait_msg, progress, download_task))
     try:
         result, root = await wait_for(
@@ -178,7 +166,7 @@ async def social_media_photos(client, message):
         except Exception:
             pass
         files = result.files[:SOCIAL_MAX_FILES]
-        tiktok_photo = "tiktok.com" in urls[0].lower() and "/video/" not in urls[0].lower()
+        tiktok_photo = "tiktok.com" in url.lower() and "/video/" not in url.lower()
         photo_post = result.is_photo_post or (tiktok_photo and bool(files) and all(path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS for path in files))
         if photo_post:
             files = [path for path in files if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS]
@@ -249,7 +237,7 @@ async def social_media_photos(client, message):
 
         await wait_msg.delete()
     except Exception as error:
-        LOGGER.warning("Social media download failed for %s: %s", urls[0], error)
+        LOGGER.warning("Social media download failed for %s: %s", url, error)
         try:
             await wait_msg.edit(f"❌ Could not download the public media: {escape(str(error), quote=True)}")
         except Exception:
@@ -258,6 +246,12 @@ async def social_media_photos(client, message):
         status_task.cancel()
         if root is not None:
             cleanup_social_media(root)
+
+
+async def _process_social_media_links(client, message, urls: list[str]) -> None:
+    """Handle social URLs sequentially to avoid duplicate downloads and Telegram flood."""
+    for url in urls:
+        await _process_social_media(client, message, url)
 
 
 async def _social_progress_status(wait_msg, progress: dict[str, float], download_task) -> None:
@@ -280,51 +274,42 @@ async def _social_progress_status(wait_msg, progress: dict[str, float], download
         await asleep(SOCIAL_STATUS_EDIT_INTERVAL_SECONDS)
 
 
-@Bypass.on_message(BypassFilter & (OwnerOrSudo | AuthChatsTopics))
+@Bypass.on_message((BypassFilter | SocialMediaFilter) & BypassChatAccess)
 async def bypass_check(client, message):
-    uid = message.from_user.id
-    if (reply_to := message.reply_to_message) and (
-        reply_to.text is not None or reply_to.caption is not None
-    ):
-        txt = reply_to.text or reply_to.caption
-        entities = reply_to.entities or reply_to.caption_entities
-    else:
-        txt = message.text or message.caption or ""
-        if (
-            Config.AUTO_BYPASS
-            or message.chat.type == ChatType.PRIVATE
-            or len(txt.split()) > 1
-        ):
-            entities = message.entities or message.caption_entities or []
-        else:
-            return await message.reply("<i>No Link Provided!</i>")
+    txt = message.text or message.caption or ""
+    entities = message.entities or message.caption_entities or []
+    links = extract_message_links(txt, entities)
+    if not links and (reply_to := message.reply_to_message):
+        reply_text = reply_to.text or reply_to.caption or ""
+        reply_entities = reply_to.entities or reply_to.caption_entities or []
+        links = extract_message_links(reply_text, reply_entities)
+    if not links:
+        return await message.reply("<i>No Link Provided!</i>")
 
-    wait_msg = await message.reply("<i>🔎 Scraping... please wait</i>")
+    routed_links = [(link, classify_link(link)) for link in links]
+    social_links = [link for link, route in routed_links if route == "social_media"]
+    tlinks = [link for link, route in routed_links if route != "social_media"]
+    if not tlinks:
+        if social_links:
+            await _process_social_media_links(client, message, social_links)
+        return
+
+    wait_msg = await message.reply("<i>🔎 Checking link types and scraping... please wait</i>")
     start = time()
-
-    link, tlinks, no = "", [], 0
-    seen_links = set()
-    atasks = []
-    for enty in entities:
-        if enty.type == MessageEntityType.URL:
-            link = txt[enty.offset : (enty.offset + enty.length)]
-        elif enty.type == MessageEntityType.TEXT_LINK:
-            link = enty.url
-
-        if link and link.casefold() not in seen_links:
-            seen_links.add(link.casefold())
-            no += 1
-            tlinks.append(link)
-            atasks.append(create_task(wait_for(direct_link_checker(link), timeout=BYPASS_TASK_TIMEOUT_SECONDS)))
-            link = ""
-
-    ad_domains = (
-        "arolinks.com", "gplinks.co", "vplink.in", "short4cash.com",
-        "vipshort.in", "adsfly", "adrinolinks", "archive.toonworld4all.me",
-        "softurl.in", "surajitlinks.in", "surajitmodz.", "djbasskingg.com",
+    social_task = (
+        create_task(_process_social_media_links(client, message, social_links))
+        if social_links
+        else None
     )
-    operation = "🔗 Bypassing ads..." if any(any(domain in item.lower() for domain in ad_domains) for item in tlinks) else "🔎 Scraping..."
-    if operation != "🔎 Scraping...":
+
+    atasks = [
+        create_task(wait_for(direct_link_checker(link), timeout=BYPASS_TASK_TIMEOUT_SECONDS))
+        for link in tlinks
+    ]
+
+    has_ad_link = any(route == "ad_shortener" for _, route in routed_links)
+    operation = "🔗 Bypassing ads..." if has_ad_link else "🔎 Scraping..."
+    if has_ad_link:
         try:
             await wait_for(wait_msg.edit(f"<i>{operation} please wait</i>"), timeout=10)
         except Exception:
@@ -489,6 +474,8 @@ async def bypass_check(client, message):
             await wait_for(wait_msg.edit(f"Scrape completed, but formatted output failed: {escape(str(error))}\n\n{fallback[:3500]}"), timeout=15)
         except Exception:
             await wait_for(message.reply(f"Scrape completed.\n\n{fallback[:3500]}", reply_to_message_id=message.id), timeout=15)
+    if social_task:
+        await social_task
 
 
 @Bypass.on_message(command("log") & OwnerOrSudo)

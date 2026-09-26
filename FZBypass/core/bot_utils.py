@@ -1,13 +1,18 @@
 from pyrogram.filters import create
 from pyrogram.enums import ChatType, MessageEntityType
-from re import search, match, escape
+from re import search, match, escape, finditer
 from requests import get as rget
 from urllib.parse import urlparse, parse_qs
 from FZBypass import Config
-from FZBypass.core.sudo import is_sudo_user
+from FZBypass.core.sudo import authorized_group_override, is_sudo_user
 
 
 async def auth_topic(_, __, message):
+    override = authorized_group_override(message.chat.id)
+    if override is False:
+        return False
+    if override is True:
+        return True
     for chat in Config.AUTH_CHATS:
         if ":" in chat:
             chat_id, topic_id = chat.split(":")
@@ -34,7 +39,42 @@ async def owner_or_sudo(_, __, message):
 OwnerOrSudo = create(owner_or_sudo)
 
 
-SOCIAL_MEDIA_RE = r"(?i)https?://(?:www\.)?(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch|instagram\.com)/"
+async def bypass_chat_access(_, client, message):
+    if message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+        if authorized_group_override(message.chat.id) is False:
+            return False
+    return await owner_or_sudo(_, client, message) or await auth_topic(_, client, message)
+
+
+BypassChatAccess = create(bypass_chat_access)
+
+
+SOCIAL_MEDIA_RE = r"(?i)https?://(?:(?:www|m)\.)?(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch|instagram\.com)/"
+URL_RE = r"https?://[^\s<>]+"
+AD_HOST_MARKERS = (
+    "arolinks", "gplinks", "vplink", "short4cash", "vipshort", "adsfly",
+    "adrinolinks", "surajitlinks", "djbasskingg", "try2link", "gyanilinks",
+    "gtlinks", "anlinks", "ronylink", "evolinks", "tnshort", "xpshort",
+    "bdnewsx", "techymozo", "lolshort", "onepagelink", "moneykamalo",
+    "droplink", "tinyfy", "krownlinks", "du-link", "dulink", "indianshortner",
+    "easysky", "tnlink", "link4earn", "shortingly", "short2url", "urlsopen",
+    "mdiskshortner", "linkpays", "sklinks", "link1s", "tulinks", "vipurl",
+    "indyshare", "linkyearn", "earn4link", "linksly", "rocklinks",
+    "mplaylink", "shrinke", "urlspay", "tnvalue", "sxslink", "moneycase",
+    "urllinkshort", "dtglinks", "v2links", "kpslink", "tamizhmasters",
+    "tglink", "pandaznetwork", "url4earn", "ez4short", "dalink", "omnifly",
+    "sheralinks", "bindaaslinks", "viplinks", "shrinkforearn", "bringlifes",
+    "linkfly", "earn2me", "vplinks", "narzolinks", "earn2short", "instantearn",
+    "linkjust", "pdiskshortener", "publicearn", "modijiurl", "linkshortx",
+    "shorito", "ziplinker", "ouo", "shareus", "shrs", "linkvertise", "rslinks",
+    "appurl", "surl", "thinfi", "justpaste", "linksxyz", "babylinks",
+)
+PROVIDER_HOST_MARKERS = (
+    "sharer", "hubcloud", "hubdrive", "katdrive", "drivefire", "filepress",
+    "filebee", "appdrive", "gdflix", "pressbee", "onlystream", "toonworld4all",
+    "cinevood", "skymovieshd", "kayoanime", "sharespark", "terabox", "mediafire",
+    "gofile", "dotflix",
+)
 
 
 def _is_bypass_command(client, text: str | None) -> bool:
@@ -46,10 +86,49 @@ def _is_bypass_command(client, text: str | None) -> bool:
 
 
 def _has_links(message) -> bool:
-    return any(
+    if any(
         entity.type in {MessageEntityType.TEXT_LINK, MessageEntityType.URL}
         for entity in (message.entities or message.caption_entities or [])
+    ):
+        return True
+    return bool(search(URL_RE, message.text or message.caption or ""))
+
+
+def extract_message_links(text: str, entities=None) -> list[str]:
+    """Extract visible and hidden Telegram links once, preserving message order."""
+    links = []
+    for entity in entities or []:
+        if entity.type == MessageEntityType.TEXT_LINK:
+            link = entity.url
+        else:
+            continue
+        link = link.rstrip(".,;:!?)]}>")
+        if link:
+            links.append((entity.offset, link))
+    links.extend(
+        (match.start(), match.group(0).rstrip(".,;:!?)]}>"))
+        for match in finditer(URL_RE, text)
     )
+    unique = []
+    seen = set()
+    for _, link in sorted(links, key=lambda item: item[0]):
+        key = link.casefold()
+        if key not in seen:
+            seen.add(key)
+            unique.append(link)
+    return unique
+
+
+def classify_link(link: str) -> str:
+    """Classify a link before choosing exactly one processing path."""
+    if search(SOCIAL_MEDIA_RE, link):
+        return "social_media"
+    host = (urlparse(link).hostname or "").lower().removeprefix("www.")
+    if any(marker in host for marker in AD_HOST_MARKERS):
+        return "ad_shortener"
+    if any(marker in host for marker in PROVIDER_HOST_MARKERS):
+        return "sharing_or_movie"
+    return "generic_resolver"
 
 
 def _has_social_link(message) -> bool:

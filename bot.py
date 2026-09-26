@@ -12,7 +12,8 @@ from pyrogram.errors import FloodWait
 from dataclasses import asdict
 
 from FZBypass import Bypass
-from FZBypass.core.sudo import load_sudo_users
+from FZBypass.core.sudo import load_authorized_groups, load_sudo_users
+from FZBypass.core.restart import notify_restart
 from FZBypass.core.turnstile_solver import solve_sync, SolveResult
 
 app = Flask(__name__)
@@ -108,6 +109,7 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
     Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False), daemon=True).start()
     load_sudo_users()
+    load_authorized_groups()
     while True:
         try:
             Bypass.start()
@@ -130,6 +132,7 @@ if __name__ == "__main__":
             except Exception as stop_error:
                 LOGGER.warning("Could not reset Telegram client after FloodWait: %s", stop_error)
             time.sleep(wait_seconds)
+    Bypass.loop.run_until_complete(notify_restart())
     try:
         idle()
     finally:

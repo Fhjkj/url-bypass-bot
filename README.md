@@ -54,8 +54,9 @@ Set `BOT_TOKEN`, `API_ID`, and `API_HASH`. Set `OWNER_ID` for owner-only control
 
 - In **private chat**, authorized users can send supported links without a command.
 - In **groups**, start a request with `/bypass <link>` (or reply to a supported social-media link with `/bypass`). A bare group link is ignored.
-- Duplicate links in one message are collapsed, and social-media messages are routed to one handler only.
+- Each URL is classified once as social media, an ad shortener, a sharing/movie provider, or a generic link; duplicate URLs are collapsed, and social media is sent only to its downloader while every other category goes through the resolver once.
 - The bot owner can grant/revoke persistent sudo access with `/addsudo <telegram_id>` and `/rmsudo <telegram_id>`. Sudo users receive the bot's normal authorized access, including `/bypass`, `/bash`, `/shell`, `/log`, and `/restart`; only the owner can manage sudo users.
+- The owner or a sudo user can persistently allow or revoke a group with `/authorize` or `/unauthorize` inside that group, or pass a group ID, such as `/authorize -1001234567890`. Group overrides are stored in MongoDB and take precedence over `AUTH_CHATS`.
 
 ## Solver configuration
 
