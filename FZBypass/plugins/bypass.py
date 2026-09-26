@@ -5,7 +5,7 @@ from html import escape
 from pathlib import Path
 from asyncio import create_task, gather, sleep as asleep, wait_for
 from pyrogram import filters
-from pyrogram.filters import command, user
+from pyrogram.filters import command
 from pyrogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -14,7 +14,7 @@ from pyrogram.types import (
     InputMediaPhoto,
     InputMediaDocument,
 )
-from pyrogram.enums import MessageEntityType
+from pyrogram.enums import ChatType, MessageEntityType
 from pyrogram.enums import ParseMode
 from pyrogram.errors import BadRequest, FloodWait, QueryIdInvalid
 
@@ -23,7 +23,13 @@ from FZBypass.core.bypass_checker import direct_link_checker, is_excep_link
 from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import GofileResult
 from FZBypass.core.provider_scrapers import HubCloudPackResult, ProviderFileResult
-from FZBypass.core.bot_utils import AuthChatsTopics, convert_time, BypassFilter
+from FZBypass.core.bot_utils import (
+    AuthChatsTopics,
+    BypassFilter,
+    OwnerOrSudo,
+    SocialMediaFilter,
+    convert_time,
+)
 from FZBypass.core.social_media import cleanup_social_media, download_social_media, find_social_urls
 
 BYPASS_TASK_TIMEOUT_SECONDS = max(70, int(os.getenv("BYPASS_TASK_TIMEOUT_SECONDS", "150")))
@@ -139,14 +145,18 @@ async def channel_placeholder(_, query):
     await query.answer()
 
 
-@Bypass.on_message((user(Config.OWNER_ID) | AuthChatsTopics) & filters.regex(r"(?i)https?://(?:www\.)?(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch|instagram\.com)/"))
+@Bypass.on_message(SocialMediaFilter & (OwnerOrSudo | AuthChatsTopics))
 async def social_media_photos(client, message):
     """Send public TikTok/Facebook media without re-encoding the source files."""
     message_text = message.text or message.caption or ""
-    # /bypass and /bp are handled by the generic resolver; do not run this
-    # social-media handler a second time for the same Telegram update.
-    if message_text.lstrip().lower().startswith(("/bypass", "/bp")):
-        return
+    if (
+        message.reply_to_message
+        and message_text.lstrip().lower().startswith(("/bypass", "/bp"))
+        and not find_social_urls(message_text)
+    ):
+        message_text = (
+            message.reply_to_message.text or message.reply_to_message.caption or ""
+        )
     urls = find_social_urls(message_text)
     if not urls:
         return
@@ -270,7 +280,7 @@ async def _social_progress_status(wait_msg, progress: dict[str, float], download
         await asleep(SOCIAL_STATUS_EDIT_INTERVAL_SECONDS)
 
 
-@Bypass.on_message(BypassFilter & (user(Config.OWNER_ID) | AuthChatsTopics))
+@Bypass.on_message(BypassFilter & (OwnerOrSudo | AuthChatsTopics))
 async def bypass_check(client, message):
     uid = message.from_user.id
     if (reply_to := message.reply_to_message) and (
@@ -278,16 +288,22 @@ async def bypass_check(client, message):
     ):
         txt = reply_to.text or reply_to.caption
         entities = reply_to.entities or reply_to.caption_entities
-    elif Config.AUTO_BYPASS or len(message.text.split()) > 1:
-        txt = message.text
-        entities = message.entities
     else:
-        return await message.reply("<i>No Link Provided!</i>")
+        txt = message.text or message.caption or ""
+        if (
+            Config.AUTO_BYPASS
+            or message.chat.type == ChatType.PRIVATE
+            or len(txt.split()) > 1
+        ):
+            entities = message.entities or message.caption_entities or []
+        else:
+            return await message.reply("<i>No Link Provided!</i>")
 
     wait_msg = await message.reply("<i>🔎 Scraping... please wait</i>")
     start = time()
 
     link, tlinks, no = "", [], 0
+    seen_links = set()
     atasks = []
     for enty in entities:
         if enty.type == MessageEntityType.URL:
@@ -295,7 +311,8 @@ async def bypass_check(client, message):
         elif enty.type == MessageEntityType.TEXT_LINK:
             link = enty.url
 
-        if link:
+        if link and link.casefold() not in seen_links:
+            seen_links.add(link.casefold())
             no += 1
             tlinks.append(link)
             atasks.append(create_task(wait_for(direct_link_checker(link), timeout=BYPASS_TASK_TIMEOUT_SECONDS)))
@@ -474,7 +491,7 @@ async def bypass_check(client, message):
             await wait_for(message.reply(f"Scrape completed.\n\n{fallback[:3500]}", reply_to_message_id=message.id), timeout=15)
 
 
-@Bypass.on_message(command("log") & user(Config.OWNER_ID))
+@Bypass.on_message(command("log") & OwnerOrSudo)
 async def send_logs(client, message):
     await message.reply_document("log.txt", quote=True)
 

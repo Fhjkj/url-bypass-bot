@@ -1,9 +1,10 @@
 from pyrogram.filters import create
-from pyrogram.enums import MessageEntityType
-from re import search, match
+from pyrogram.enums import ChatType, MessageEntityType
+from re import search, match, escape
 from requests import get as rget
 from urllib.parse import urlparse, parse_qs
 from FZBypass import Config
+from FZBypass.core.sudo import is_sudo_user
 
 
 async def auth_topic(_, __, message):
@@ -25,28 +26,75 @@ async def auth_topic(_, __, message):
 AuthChatsTopics = create(auth_topic)
 
 
+async def owner_or_sudo(_, __, message):
+    user_id = message.from_user.id if message.from_user else None
+    return user_id == Config.OWNER_ID or is_sudo_user(user_id)
+
+
+OwnerOrSudo = create(owner_or_sudo)
+
+
+SOCIAL_MEDIA_RE = r"(?i)https?://(?:www\.)?(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch|instagram\.com)/"
+
+
+def _is_bypass_command(client, text: str | None) -> bool:
+    if not text:
+        return False
+    username = getattr(getattr(client, "me", None), "username", None)
+    suffix = rf"(?:@{escape(username)})?" if username else ""
+    return bool(match(rf"^/(?:bypass|bp){suffix}(?:\s|$)", text, flags=2))
+
+
+def _has_links(message) -> bool:
+    return any(
+        entity.type in {MessageEntityType.TEXT_LINK, MessageEntityType.URL}
+        for entity in (message.entities or message.caption_entities or [])
+    )
+
+
+def _has_social_link(message) -> bool:
+    text = message.text or message.caption or ""
+    if search(SOCIAL_MEDIA_RE, text):
+        return True
+    reply = message.reply_to_message
+    if reply:
+        return bool(search(SOCIAL_MEDIA_RE, reply.text or reply.caption or ""))
+    return False
+
+
 async def auto_bypass(_, c, message):
-    if (
-        Config.AUTO_BYPASS
-        and message.entities
-        and not match(r"^\/(bash|shell)($| )", message.text)
-        and any(
-            enty.type in [MessageEntityType.TEXT_LINK, MessageEntityType.URL]
-            for enty in message.entities
-        )
-    ):
+    text = message.text or message.caption or ""
+    command = _is_bypass_command(c, text)
+    chat_type = message.chat.type
+    is_group = chat_type in {ChatType.GROUP, ChatType.SUPERGROUP}
+    is_private = chat_type == ChatType.PRIVATE
+
+    if is_group:
+        # Never auto-run links from group chatter. A group request must be
+        # explicit, and supported social links are handled by one other handler.
+        return command and not _has_social_link(message)
+    if is_private:
+        # Private messages need no command. Social links belong exclusively to
+        # the media downloader so AUTO_BYPASS cannot start a second job.
+        if _has_social_link(message):
+            return False
+        return command or _has_links(message)
+    return False
+
+
+async def social_media_message(_, c, message):
+    if not _has_social_link(message):
+        return False
+    chat_type = message.chat.type
+    if chat_type == ChatType.PRIVATE:
         return True
-    elif (
-        not Config.AUTO_BYPASS
-        and (txt := message.text)
-        and match(rf"^\/(bypass|bp)(@{c.me.username})?($| )", txt)
-        and not match(r"^\/(bash|shell)($| )", txt)
-    ):
-        return True
+    if chat_type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+        return _is_bypass_command(c, message.text or message.caption or "")
     return False
 
 
 BypassFilter = create(auto_bypass)
+SocialMediaFilter = create(social_media_message)
 
 
 def get_gdriveid(link):

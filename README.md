@@ -48,7 +48,14 @@ The browser profile is persisted to `CHROMIUM_PROFILE_DIR` (default
 
 ## Required environment variables
 
-Set `BOT_TOKEN`, `API_ID`, and `API_HASH`. Set `OWNER_ID` for owner-only controls and `AUTH_CHATS` for authorized group/topic access. See `sample_config.env` for optional cookies, tokens, and site settings.
+Set `BOT_TOKEN`, `API_ID`, and `API_HASH`. Set `OWNER_ID` for owner-only controls and `AUTH_CHATS` for authorized group/topic access. Set `MONGODB_URI` to persist sudo users across restarts and redeployments; its URI should include a database name, or set `MONGODB_DATABASE` explicitly. See `sample_config.env` for the available settings.
+
+## Bypass and sudo access
+
+- In **private chat**, authorized users can send supported links without a command.
+- In **groups**, start a request with `/bypass <link>` (or reply to a supported social-media link with `/bypass`). A bare group link is ignored.
+- Duplicate links in one message are collapsed, and social-media messages are routed to one handler only.
+- The bot owner can grant/revoke persistent sudo access with `/addsudo <telegram_id>` and `/rmsudo <telegram_id>`. Sudo users receive the bot's normal authorized access, including `/bypass`, `/bash`, `/shell`, `/log`, and `/restart`; only the owner can manage sudo users.
 
 ## Solver configuration
 

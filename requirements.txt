@@ -15,3 +15,5 @@ urllib3==1.26
 yt-dlp
 uvloop
 Pillow
+pymongo
+dnspython

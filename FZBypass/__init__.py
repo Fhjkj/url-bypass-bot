@@ -29,6 +29,8 @@ class Config:
     AUTO_BYPASS = getenv("AUTO_BYPASS", "False").lower() == "true"
     AUTH_CHATS = getenv("AUTH_CHATS", "").split()
     OWNER_ID = int(getenv("OWNER_ID", 0))
+    MONGODB_URI = getenv("MONGODB_URI", "").strip()
+    MONGODB_DATABASE = getenv("MONGODB_DATABASE", "").strip()
     DIRECT_INDEX = getenv("DIRECT_INDEX", "").rstrip("/")
     LARAVEL_SESSION = getenv("LARAVEL_SESSION", "")
     XSRF_TOKEN = getenv("XSRF_TOKEN", "")

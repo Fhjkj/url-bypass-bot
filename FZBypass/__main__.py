@@ -1,12 +1,14 @@
-from FZBypass import Bypass, LOGGER, Config
+from FZBypass import Bypass, LOGGER
+from FZBypass.core.sudo import load_sudo_users
 from pyrogram import idle
-from pyrogram.filters import command, user
+from pyrogram.filters import command
 from os import path as ospath, execl
 from asyncio import create_subprocess_exec
 from sys import executable
+from FZBypass.core.bot_utils import OwnerOrSudo
 
 
-@Bypass.on_message(command("restart") & user(Config.OWNER_ID))
+@Bypass.on_message(command("restart") & OwnerOrSudo)
 async def restart(client, message):
     restart_message = await message.reply("<i>Restarting...</i>")
     await (await create_subprocess_exec("python3", "update.py")).wait()
@@ -30,6 +32,7 @@ async def restart():
             LOGGER.error(e)
 
 
+load_sudo_users()
 Bypass.start()
 LOGGER.info("FZ Bot Started!")
 Bypass.loop.run_until_complete(restart())

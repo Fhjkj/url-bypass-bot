@@ -12,6 +12,7 @@ from pyrogram.errors import FloodWait
 from dataclasses import asdict
 
 from FZBypass import Bypass
+from FZBypass.core.sudo import load_sudo_users
 from FZBypass.core.turnstile_solver import solve_sync, SolveResult
 
 app = Flask(__name__)
@@ -106,6 +107,7 @@ def bypass():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
     Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False), daemon=True).start()
+    load_sudo_users()
     while True:
         try:
             Bypass.start()
