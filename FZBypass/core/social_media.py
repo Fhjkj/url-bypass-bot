@@ -55,7 +55,7 @@ class SocialMediaResult:
 
 SOCIAL_CACHE_DIR = Path(os.getenv("SOCIAL_MEDIA_CACHE_DIR", "/tmp/fzbypass-social-cache"))
 SOCIAL_CACHE_TTL_SECONDS = max(60, int(os.getenv("SOCIAL_MEDIA_CACHE_TTL_SECONDS", "86400")))
-SOCIAL_CACHE_VERSION = 2
+SOCIAL_CACHE_VERSION = 3
 
 
 def _cache_path(url: str) -> Path:
@@ -370,6 +370,22 @@ def _download_sync(url: str, root: Path, progress: dict[str, float] | None = Non
         try:
             if not is_tiktok:
                 return _yt_dlp_download(url, root, proxy, progress)
+            # Resolve vt.tiktok.com short links first. TikTok photo posts expose
+            # /photo/ in the final URL and should use image metadata extraction,
+            # not yt-dlp's collection/archive path.
+            try:
+                resolved = requests.get(
+                    url,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    proxies=_proxy_options(proxy),
+                    timeout=int(os.getenv("SOCIAL_REQUEST_TIMEOUT_SECONDS", "12")),
+                    allow_redirects=True,
+                )
+                final_url = resolved.url or url
+                if "/photo/" in final_url.lower():
+                    return _metadata_photo_download(final_url, root, proxy, progress)
+            except Exception as error:
+                last_error = error
             try:
                 return _yt_dlp_download(url, root, proxy, progress)
             except Exception as error:
