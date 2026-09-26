@@ -7,7 +7,7 @@ flask
 lxml
 httpx
 python-dotenv
-pyrofork
+pyrofork==2.3.68
 tgcrypto
 playwright==1.63.0
 requests
