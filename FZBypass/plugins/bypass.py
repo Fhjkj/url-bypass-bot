@@ -135,7 +135,7 @@ async def social_media_photos(client, message):
             raise RuntimeError("No media files were found")
 
         caption = f"📷 <b>{escape(result.title, quote=True)}</b>\n\n✅ Original source file"
-        if SOCIAL_SEND_AS_DOCUMENT:
+        if SOCIAL_SEND_AS_DOCUMENT and not result.is_photo_post:
             for start in range(0, len(files), 10):
                 batch = files[start : start + 10]
                 if len(batch) == 1:

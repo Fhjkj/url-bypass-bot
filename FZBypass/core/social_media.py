@@ -55,6 +55,7 @@ class SocialMediaResult:
 
 SOCIAL_CACHE_DIR = Path(os.getenv("SOCIAL_MEDIA_CACHE_DIR", "/tmp/fzbypass-social-cache"))
 SOCIAL_CACHE_TTL_SECONDS = max(60, int(os.getenv("SOCIAL_MEDIA_CACHE_TTL_SECONDS", "86400")))
+SOCIAL_CACHE_VERSION = 2
 
 
 def _cache_path(url: str) -> Path:
@@ -67,6 +68,9 @@ def _load_cached(url: str, root: Path, progress: dict[str, float] | None = None)
     manifest_path = entry / "manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text())
+        if manifest.get("cache_version") != SOCIAL_CACHE_VERSION:
+            shutil.rmtree(entry, ignore_errors=True)
+            return None
         if time.time() - float(manifest.get("cached_at", 0)) > SOCIAL_CACHE_TTL_SECONDS:
             shutil.rmtree(entry, ignore_errors=True)
             return None
@@ -114,6 +118,7 @@ def _store_cached(result: SocialMediaResult, cache_url: str) -> None:
             "is_photo_post": result.is_photo_post,
             "files": cached_names,
             "cached_at": time.time(),
+            "cache_version": SOCIAL_CACHE_VERSION,
         }))
         shutil.rmtree(entry, ignore_errors=True)
         temporary.rename(entry)
