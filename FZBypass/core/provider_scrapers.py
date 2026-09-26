@@ -21,6 +21,11 @@ class ProviderFileResult:
 
 
 @dataclass
+class FilePressResult(ProviderFileResult):
+    cloud_pending: bool = False
+
+
+@dataclass
 class HubCloudPackResult:
     filename: str
     size: str
@@ -28,6 +33,15 @@ class HubCloudPackResult:
     file_count: int
     unresolved_count: int = 0
     truncated_count: int = 0
+
+
+@dataclass
+class ToonWorldResult:
+    filepress_url: str
+    file_result: FilePressResult | None
+    redirect_elapsed: float
+    filepress_elapsed: float
+    error: str | None = None
 
 
 HUBCLOUD_PACK_MAX_FILES = 30
@@ -202,13 +216,59 @@ async def toonworld_redirect(url: str) -> str:
         async with session.get(url, allow_redirects=False, ssl=False) as response:
             html = await response.text(errors="ignore")
             if response.status in {301, 302, 303, 307, 308} and response.headers.get("Location"):
-                return response.headers["Location"]
+                location = urljoin(url, response.headers["Location"])
+                parsed = urlparse(location)
+                host = (parsed.hostname or "").lower()
+                if (
+                    parsed.scheme == "https"
+                    and (
+                        host == "filepress.baby"
+                        or host == "filepress.lat"
+                        or host.endswith(".filepress.baby")
+                        or host.endswith(".filepress.lat")
+                    )
+                    and parsed.path.startswith("/file/")
+                ):
+                    return location
+                raise DDLException("ToonWorld returned an ad redirect instead of the embedded FilePress destination")
     props = re.search(r'window\.__PROPS__\s*=\s*(\{.*?\});', html, flags=re.S)
     if props:
-        destination = re.search(r'"destination"\s*:\s*"(https?://[^"\\]+)', props.group(1))
-        if destination:
-            return destination.group(1)
-    raise DDLException("ToonWorld redirect destination was not exposed")
+        try:
+            payload = loads(props.group(1))
+        except (TypeError, ValueError):
+            payload = {}
+        link = payload.get("link") if isinstance(payload, dict) else None
+        if isinstance(link, dict):
+            domain = link.get("domain")
+            hidden = link.get("hidden")
+            if isinstance(domain, str) and isinstance(hidden, str):
+                parsed = urlparse(domain)
+                host = (parsed.hostname or "").lower()
+                if (
+                    parsed.scheme == "https"
+                    and parsed.path.rstrip("/").endswith("/file")
+                    and (
+                        host == "filepress.baby"
+                        or host == "filepress.lat"
+                        or host.endswith(".filepress.baby")
+                        or host.endswith(".filepress.lat")
+                    )
+                    and re.fullmatch(r"[A-Za-z0-9_-]{6,128}", hidden.strip())
+                ):
+                    return f"{domain.rstrip('/')}/{quote(hidden.strip(), safe='-_')}"
+        # Older pages may put the FilePress URL directly in `destination`.
+        destination = payload.get("destination") if isinstance(payload, dict) else None
+        if isinstance(destination, str):
+            parsed = urlparse(destination)
+            host = (parsed.hostname or "").lower()
+            if parsed.scheme == "https" and (
+                host == "filepress.baby"
+                or host == "filepress.lat"
+                or host.endswith(".filepress.baby")
+                or host.endswith(".filepress.lat")
+            ):
+                return destination
+    raise DDLException("ToonWorld page exposed its ad URL but not the embedded FilePress destination")
 
 
 async def gdflix(url: str) -> ProviderFileResult:

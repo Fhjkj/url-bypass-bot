@@ -2,6 +2,7 @@ from re import match
 import asyncio
 import shutil
 from concurrent.futures import ThreadPoolExecutor
+from time import monotonic
 from urllib.parse import urlparse
 
 from FZBypass.core.bypass_dlinks import *
@@ -16,12 +17,14 @@ from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import gofile, GofileResult
 from FZBypass.core.provider_scrapers import (
     filebee,
+    FilePressResult,
     gdflix,
     hubcloud,
     tmbcloud,
     toonworld_redirect,
     HubCloudPackResult,
     ProviderFileResult,
+    ToonWorldResult,
 )
 from FZBypass.core.javhdporn import javhdporn
 
@@ -456,7 +459,23 @@ async def direct_link_checker(link, onlylink=False):
     elif bool(match(r"https?:\/\/hubcloud\.(?:ist|cx|fans|lol|foo)\/(?:drive|video)\/\S+", link)):
         blink = await hubcloud(link)
     elif bool(match(r"https?:\/\/archive\.toonworld4all\.me\/redirect\/\S+", link)):
-        blink = await toonworld_redirect(link)
+        redirect_started = monotonic()
+        filepress_url = await toonworld_redirect(link)
+        redirect_elapsed = monotonic() - redirect_started
+        filepress_started = monotonic()
+        try:
+            file_result = await filepress(filepress_url, page_referrer=link)
+            error = None
+        except Exception as exc:
+            file_result = None
+            error = f"{exc.__class__.__name__}: {exc}"
+        return ToonWorldResult(
+            filepress_url=filepress_url,
+            file_result=file_result if isinstance(file_result, FilePressResult) else None,
+            redirect_elapsed=redirect_elapsed,
+            filepress_elapsed=monotonic() - filepress_started,
+            error=error,
+        )
     elif bool(match(r"https?:\/\/(?:www\.)?gplinks\.co\/\S+", link)):
         blink = await extract_final_destination(link)
     elif bool(match(r"https?:\/\/(?:www\.)?vplink\.in\/\S+", link)):
@@ -506,7 +525,10 @@ async def direct_link_checker(link, onlylink=False):
             f"<i>No Bypass Function Found for your Link :</i> <code>{link}</code>"
         )
 
-    if onlylink or isinstance(blink, (DotflixResult, GofileResult, HubCloudPackResult, ProviderFileResult)):
+    if onlylink or isinstance(
+        blink,
+        (DotflixResult, GofileResult, HubCloudPackResult, ProviderFileResult, ToonWorldResult),
+    ):
         return blink
 
     links = []

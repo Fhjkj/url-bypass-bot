@@ -1,6 +1,7 @@
 from base64 import b64decode
 from asyncio import create_task, gather, sleep as asleep
 from html import escape
+import re
 import os
 from re import findall, DOTALL
 from time import monotonic
@@ -18,6 +19,7 @@ from FZBypass import LOGGER, Config
 from FZBypass.core.bot_utils import get_dl
 from FZBypass.core.exceptions import DDLException
 from FZBypass.core.proxy_pool import configured_proxies
+from FZBypass.core.provider_scrapers import FilePressResult
 
 FILEPRESS_CLOUD_TIMEOUT_SECONDS = min(
     120, max(0, int(os.getenv("FILEPRESS_CLOUD_TIMEOUT_SECONDS", "90")))
@@ -139,7 +141,73 @@ async def _filepress_cloud_link(sess, file_id: str, source_url: str, proxy: str 
     raise RuntimeError("FilePress did not return a Cloud download URL")
 
 
-async def filepress(url: str):
+def _filepress_size(value) -> str:
+    if isinstance(value, str):
+        value = value.strip()
+        if re.search(r"\b(?:B|KB|MB|GB|TB)\b", value, flags=0):
+            return value
+        try:
+            value = float(value)
+        except ValueError:
+            return "Unknown size"
+    if not isinstance(value, (int, float)) or value < 0:
+        return "Unknown size"
+    value = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{int(value)} {unit}" if unit == "B" else f"{value:.2f} {unit}"
+        value /= 1024
+    return "Unknown size"
+
+
+async def _filepress_metadata(
+    sess, file_id: str, source_url: str, proxy: str | None, page_referrer: str | None = None
+):
+    """Read public file metadata from FilePress' frontend metadata endpoint."""
+    raw = urlparse(source_url)
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Origin": f"{raw.scheme}://{raw.netloc}",
+        "Referer": source_url,
+    }
+    kwargs = {
+        "headers": headers,
+        "params": {"referrer": page_referrer or source_url},
+        "timeout": 8,
+    }
+    if proxy:
+        kwargs["proxies"] = {"http": proxy, "https": proxy}
+    response = await sess.get(
+        f"{raw.scheme}://{raw.netloc}/api/file/get/{quote(file_id, safe='')}",
+        **kwargs,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"FilePress metadata API returned HTTP {response.status_code}")
+    payload = response.json()
+    if isinstance(payload, dict) and "data" in payload:
+        payload = payload["data"]
+    candidates = [payload]
+    while candidates:
+        item = candidates.pop(0)
+        if isinstance(item, dict):
+            name = next(
+                (item.get(key) for key in ("name", "fileName", "filename", "original_name", "originalName")
+                 if isinstance(item.get(key), str) and item.get(key).strip()),
+                None,
+            )
+            if name:
+                size = next(
+                    (item.get(key) for key in ("actualSize", "size", "fileSize") if item.get(key) is not None),
+                    None,
+                )
+                return name.strip(), _filepress_size(size)
+            candidates.extend(item.values())
+        elif isinstance(item, list):
+            candidates.extend(item)
+    raise RuntimeError("FilePress metadata response did not include a file name")
+
+
+async def filepress(url: str, page_referrer: str | None = None):
     attempts = [None, *configured_proxies()]
     last_error = None
     telegram_link = None
@@ -147,6 +215,8 @@ async def filepress(url: str):
     instant_link = None
     cloud_link = None
     cloud_pending = False
+    filename = "FilePress file"
+    file_size = "Unknown size"
     for proxy in attempts:
         try:
             headers = {
@@ -181,17 +251,26 @@ async def filepress(url: str):
                     # Generate each route independently: one unavailable method
                     # must not hide the others or turn a valid page into failure.
                     results = await gather(
+                        _filepress_metadata(sess, file_id, url, proxy, page_referrer),
                         _filepress_index_link(sess, file_id, url, proxy),
                         _filepress_instant_link(sess, file_id, url, proxy),
                         _filepress_cloud_link(sess, file_id, url, proxy),
                         return_exceptions=True,
                     )
-                    index_link, instant_link, cloud_link = (
-                        result if isinstance(result, str) else None
-                        for result in results
-                    )
+                    metadata, index_result, instant_result, cloud_result = results
+                    if isinstance(metadata, tuple) and len(metadata) == 2:
+                        filename, file_size = metadata
+                    elif isinstance(metadata, BaseException):
+                        LOGGER.warning(
+                            "FilePress metadata lookup failed for %s: %s",
+                            file_id, metadata,
+                        )
+                    index_link = index_result if isinstance(index_result, str) else None
+                    instant_link = instant_result if isinstance(instant_result, str) else None
+                    cloud_link = cloud_result if isinstance(cloud_result, str) else None
                     for label, result in zip(
-                        ("Index", "Instant", "Cloud"), results
+                        ("Index", "Instant", "Cloud"),
+                        (index_result, instant_result, cloud_result),
                     ):
                         if isinstance(result, BaseException):
                             if label == "Cloud" and isinstance(result, TimeoutError):
@@ -213,22 +292,15 @@ async def filepress(url: str):
             last_error = f"{exc.__class__.__name__}: {exc}"
             continue
     if telegram_link:
-        options = []
+        links = []
         if index_link:
-            options.append(f'<b>Index:</b> <a href="{_filepress_html_href(index_link)}">Click Here</a>')
-        else:
-            options.append(
-                '<b>FilePress Source (Index unavailable):</b> '
-                f'<a href="{_filepress_html_href(url)}">Click Here</a>'
-            )
+            links.append(("Index Download", index_link))
         if instant_link:
-            options.append(f'<b>Instant Download:</b> <a href="{_filepress_html_href(instant_link)}">Click Here</a>')
+            links.append(("Instant Download", instant_link))
         if cloud_link:
-            options.append(f'<b>Cloud Download:</b> <a href="{_filepress_html_href(cloud_link)}">Click Here</a>')
-        elif cloud_pending:
-            options.append('<b>Cloud Download:</b> Still processing — try again shortly')
-        options.append(f'<b>Telegram:</b> <a href="{_filepress_html_href(telegram_link)}">Click Here</a>')
-        return "┏" + "\n┣".join(options)
+            links.append(("Cloud Download", cloud_link))
+        links.append(("Telegram", telegram_link))
+        return FilePressResult(filename, file_size, links, cloud_pending=cloud_pending)
     raise DDLException(f"FilePress direct/proxy attempts failed: {last_error or 'unknown error'}")
 
 

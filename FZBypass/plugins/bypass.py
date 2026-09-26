@@ -22,7 +22,12 @@ from FZBypass import Config, Bypass, BOT_START, LOGGER
 from FZBypass.core.bypass_checker import direct_link_checker, is_excep_link
 from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import GofileResult
-from FZBypass.core.provider_scrapers import HubCloudPackResult, ProviderFileResult
+from FZBypass.core.provider_scrapers import (
+    FilePressResult,
+    HubCloudPackResult,
+    ProviderFileResult,
+    ToonWorldResult,
+)
 from FZBypass.core.bot_utils import (
     BypassFilter,
     BypassChatAccess,
@@ -48,6 +53,39 @@ def _photo_media(path: Path, caption: str | None = None) -> InputMediaPhoto:
     stream = io.BytesIO(path.read_bytes())
     stream.name = "photo.jpg"
     return InputMediaPhoto(media=stream, caption=caption)
+
+
+def _format_toonworld_result(result: ToonWorldResult, source: str) -> str:
+    filepress_url = escape(result.filepress_url, quote=True)
+    bypassed = (
+        "🔁 <b>x1</b>\n"
+        f"▸ <b>Original ➜</b> <a href=\"{source}\">{source}</a>\n"
+        f"▸ <b>Bypassed ➜</b> <a href=\"{filepress_url}\">{filepress_url}</a>\n"
+        f"⌛ <b>Elapsed ➜</b> {escape(f'{result.redirect_elapsed:.1f}s')}"
+    )
+    if not result.file_result:
+        error_text = escape(result.error or "FilePress metadata was unavailable", quote=True)
+        return (
+            f"{bypassed}\n\n🔁 <b>x2</b>\n"
+            f"❌ FilePress details unavailable: {error_text}\n"
+            f"⌛ <b>Elapsed ➜</b> {escape(f'{result.filepress_elapsed:.1f}s')}"
+        )
+
+    file_result = result.file_result
+    download_links = [
+        f"• <a href=\"{escape(url, quote=True)}\">{escape(label)}</a>"
+        for label, url in file_result.links
+    ]
+    if file_result.cloud_pending and not any(label == "Cloud Download" for label, _ in file_result.links):
+        download_links.append("• Cloud Download (still processing)")
+    links_text = "\n".join(download_links)
+    return (
+        f"{bypassed}\n\n🔁 <b>x2</b>\n"
+        f"▸ <b>Title ➜</b> {escape(file_result.filename, quote=True)}\n"
+        f"▸ <b>Size ➜</b> {escape(file_result.size, quote=True)}\n"
+        f"▸ <b>Download Links ➜</b>\n{links_text}\n"
+        f"⌛ <b>Elapsed ➜</b> {escape(f'{result.filepress_elapsed:.1f}s')}"
+    )
 
 
 async def _upload_progress(current: int, total: int, wait_msg, state: dict[str, float], label: str):
@@ -352,6 +390,22 @@ async def bypass_check(client, message):
                 f"│\n├ 💾 <b>Size :-</b> {size}\n"
                 f"│\n└ 🔗 <b>Links :-</b> {provider_links}"
             )
+        elif isinstance(result, ToonWorldResult):
+            bypassed = _format_toonworld_result(result, source)
+        elif isinstance(result, FilePressResult):
+            filename = escape(result.filename, quote=True)
+            size = escape(result.size, quote=True)
+            provider_links = "\n".join(
+                f"• <a href=\"{escape(url, quote=True)}\">{escape(label)}</a>"
+                for label, url in result.links
+            )
+            if result.cloud_pending and not any(label == "Cloud Download" for label, _ in result.links):
+                provider_links += "\n• Cloud Download (still processing)"
+            bypassed = (
+                f"📚 <b>Title :-</b> {filename}\n"
+                f"│\n├ 💾 <b>Size :-</b> {size}\n"
+                f"│\n└ 🔗 <b>Download Links :-</b>\n{provider_links}"
+            )
         elif isinstance(result, ProviderFileResult):
             filename = escape(result.filename, quote=True)
             size = escape(result.size, quote=True)
@@ -398,6 +452,8 @@ async def bypass_check(client, message):
         card_kind = (
             "gofile" if isinstance(result, GofileResult)
             else "dotflix" if isinstance(result, DotflixResult)
+            else "toonworld" if isinstance(result, ToonWorldResult)
+            else "filepress" if isinstance(result, FilePressResult)
             else "hubcloud_pack" if isinstance(result, HubCloudPackResult)
             else "provider" if isinstance(result, ProviderFileResult)
             else ""
@@ -423,12 +479,19 @@ async def bypass_check(client, message):
                 if current:
                     bodies.append(current)
             for body in bodies:
-                cards.append(
-                    f"<blockquote>/bypass <a href=\"{source}\">{source}</a></blockquote>\n"
-                    f"<blockquote>{body}</blockquote>\n\n"
-                    "<blockquote>━━━━━━━✦✗✦━━━━━━━</blockquote>\n\n"
-                    "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b></blockquote>"
-                )
+                if card_kind == "toonworld":
+                    cards.append(
+                        f"<blockquote>{body}</blockquote>\n\n"
+                        "<blockquote>━━━━━━━✦✗✦━━━━━━━</blockquote>\n\n"
+                        "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b></blockquote>"
+                    )
+                else:
+                    cards.append(
+                        f"<blockquote>/bypass <a href=\"{source}\">{source}</a></blockquote>\n"
+                        f"<blockquote>{body}</blockquote>\n\n"
+                        "<blockquote>━━━━━━━✦✗✦━━━━━━━</blockquote>\n\n"
+                        "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b></blockquote>"
+                    )
         else:
             cards.append(
                 "<blockquote>-\n"
