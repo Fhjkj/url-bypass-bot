@@ -16,6 +16,7 @@ import re
 import shutil
 import tempfile
 import time
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -157,6 +158,8 @@ def _candidate_proxies() -> list[str | None]:
 def _yt_dlp_download(url: str, root: Path, proxy: str | None, progress: dict[str, float] | None = None) -> SocialMediaResult:
     output_template = str(root / "%(autonumber)03d-%(id)s.%(ext)s")
     is_instagram = "instagram.com" in url.lower()
+    is_tiktok = "tiktok.com" in url.lower()
+    is_tiktok_video = is_tiktok and "/video/" in url.lower()
 
     def progress_hook(status: dict[str, Any]) -> None:
         if progress is None:
@@ -173,7 +176,7 @@ def _yt_dlp_download(url: str, root: Path, proxy: str | None, progress: dict[str
         "quiet": True,
         "no_warnings": True,
         # A Reel/post URL must produce one video, not a playlist/archive.
-        "noplaylist": is_instagram,
+        "noplaylist": is_instagram or is_tiktok_video,
         "format": "bestvideo*+bestaudio/best",
         "merge_output_format": "mp4",
         "outtmpl": output_template,
@@ -181,7 +184,7 @@ def _yt_dlp_download(url: str, root: Path, proxy: str | None, progress: dict[str
         "ignoreerrors": False,
         "overwrites": True,
         "cachedir": False,
-        "socket_timeout": int(os.getenv("SOCIAL_SOCKET_TIMEOUT_SECONDS", "20")),
+        "socket_timeout": int(os.getenv("SOCIAL_SOCKET_TIMEOUT_SECONDS", "8")),
         "retries": 1,
         "fragment_retries": 1,
         "progress_hooks": [progress_hook],
@@ -205,8 +208,25 @@ def _yt_dlp_download(url: str, root: Path, proxy: str | None, progress: dict[str
 
 
 def _result_from_files(url: str, root: Path, info: dict[str, Any], is_photo_post: bool) -> SocialMediaResult:
+    # Some social extractors return a ZIP for photo/video collections. Unpack it
+    # locally so Telegram receives the actual media rather than an archive.
+    for archive in list(root.glob("*.zip")):
+        try:
+            with zipfile.ZipFile(archive) as bundle:
+                for member in bundle.infolist():
+                    destination = (root / member.filename).resolve()
+                    if not str(destination).startswith(str(root.resolve()) + os.sep):
+                        continue
+                    if member.is_dir():
+                        continue
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    with bundle.open(member) as source, destination.open("wb") as target:
+                        shutil.copyfileobj(source, target)
+            archive.unlink(missing_ok=True)
+        except (OSError, zipfile.BadZipFile):
+            continue
     files = sorted(
-        (path for path in root.iterdir() if path.is_file() and not path.name.endswith(".part")),
+        (path for path in root.rglob("*") if path.is_file() and not path.name.endswith(".part") and path.suffix.lower() != ".zip"),
         key=lambda path: path.name,
     )
     image_files = [path for path in files if _is_image(path)]
@@ -256,7 +276,13 @@ def _metadata_photo_download(url: str, root: Path, proxy: str | None, progress: 
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml",
     }
-    response = requests.get(url, headers=headers, proxies=_proxy_options(proxy), timeout=30, allow_redirects=True)
+    response = requests.get(
+        url,
+        headers=headers,
+        proxies=_proxy_options(proxy),
+        timeout=int(os.getenv("SOCIAL_REQUEST_TIMEOUT_SECONDS", "12")),
+        allow_redirects=True,
+    )
     body = response.text
     lowered = body.lower()
     if response.status_code in {401, 403, 429} or any(marker in lowered for marker in CHALLENGE_MARKERS):
@@ -275,7 +301,7 @@ def _metadata_photo_download(url: str, root: Path, proxy: str | None, progress: 
             image_url,
             headers={"User-Agent": headers["User-Agent"], "Referer": response.url},
             proxies=_proxy_options(proxy),
-            timeout=30,
+            timeout=int(os.getenv("SOCIAL_REQUEST_TIMEOUT_SECONDS", "12")),
         )
         if image_response.status_code != 200 or not image_response.content:
             continue
