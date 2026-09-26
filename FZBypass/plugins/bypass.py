@@ -74,11 +74,13 @@ async def _send_social_file(message, path: Path, caption: str | None = None, wai
         progress_kwargs = {"progress": _upload_progress, "progress_args": (wait_msg, upload_state or {}, "photo" if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS else "file")}
     if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS:
         try:
-            return await message.reply_photo(str(path), caption=caption, quote=True, **progress_kwargs)
+            with path.open("rb") as photo_stream:
+                return await message.reply_photo(photo_stream, caption=caption, quote=True, **progress_kwargs)
         except Exception as error:
             LOGGER.warning("Telegram photo upload with progress failed for %s; retrying photo without progress: %s", path, error)
             try:
-                return await message.reply_photo(str(path), caption=caption, quote=True)
+                with path.open("rb") as photo_stream:
+                    return await message.reply_photo(photo_stream, caption=caption, quote=True)
             except Exception as retry_error:
                 LOGGER.warning("Telegram photo upload failed for %s: %s", path, retry_error)
                 if not allow_document:
