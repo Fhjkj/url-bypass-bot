@@ -1,8 +1,9 @@
+import asyncio
 import re
 from dataclasses import dataclass
 from html import unescape
 from json import loads
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import quote, urljoin, urlparse, urlunparse
 
 from aiohttp import ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
@@ -17,6 +18,19 @@ class ProviderFileResult:
     filename: str
     size: str
     links: list[tuple[str, str]]
+
+
+@dataclass
+class HubCloudPackResult:
+    filename: str
+    size: str
+    files: list[ProviderFileResult]
+    file_count: int
+    unresolved_count: int = 0
+    truncated_count: int = 0
+
+
+HUBCLOUD_PACK_MAX_FILES = 30
 
 
 async def _get_html(session, url: str, **kwargs):
@@ -242,8 +256,37 @@ async def gdflix(url: str) -> ProviderFileResult:
     return ProviderFileResult(filename, size, links)
 
 
-async def hubcloud(url: str) -> ProviderFileResult:
-    timeout = ClientTimeout(total=30)
+def _hubcloud_pack_data(html: str) -> dict | None:
+    """Read HubCloud's client-rendered pack payload from its embedded JSON."""
+    match = re.search(
+        r"const\s+packData\s*=\s*JSON\.parse\(`(.*?)`\)\s*;",
+        html,
+        flags=re.S,
+    )
+    if not match:
+        return None
+    try:
+        payload = loads(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("pack"), dict):
+        return None
+    if not isinstance(payload.get("files"), list):
+        return None
+    return payload
+
+
+def _hubcloud_size(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if value < 1024 or unit == "PB":
+            return f"{value:.2f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return "Unknown size"
+
+
+async def _hubcloud_single(url: str) -> ProviderFileResult:
+    timeout = ClientTimeout(total=20)
     headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/html,application/xhtml+xml"}
     async with ClientSession(timeout=timeout, headers=headers) as session:
         status, html = await _get_html(session, url, allow_redirects=True, ssl=False)
@@ -287,3 +330,70 @@ async def hubcloud(url: str) -> ProviderFileResult:
     if not links:
         raise DDLException("HubCloud metadata loaded but no public provider links were exposed")
     return ProviderFileResult(title, size, links)
+
+
+async def _hubcloud_pack(url: str) -> HubCloudPackResult:
+    timeout = ClientTimeout(total=20)
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/html,application/xhtml+xml"}
+    async with ClientSession(timeout=timeout, headers=headers) as session:
+        status, html = await _get_html(session, url, allow_redirects=True, ssl=False)
+    if status != 200:
+        raise DDLException(f"HubCloud returned HTTP {status}")
+    payload = _hubcloud_pack_data(html)
+    if payload is None:
+        raise DDLException("HubCloud pack metadata could not be read")
+
+    pack = payload["pack"]
+    entries = [
+        item for item in payload["files"]
+        if isinstance(item, dict)
+        and re.fullmatch(r"[A-Za-z0-9_-]+", str(item.get("share_id", "")))
+    ]
+    if not entries:
+        raise DDLException("HubCloud pack contains no valid file links")
+    selected = entries[:HUBCLOUD_PACK_MAX_FILES]
+    parsed = urlparse(url)
+    origin = f"{parsed.scheme or 'https'}://{parsed.netloc}"
+    semaphore = asyncio.Semaphore(8)
+
+    async def resolve(item: dict) -> ProviderFileResult:
+        file_url = f"{origin}/drive/{quote(str(item['share_id']), safe='')}"
+        async with semaphore:
+            result = await _hubcloud_single(file_url)
+        raw_size = item.get("file_size")
+        try:
+            size = _hubcloud_size(int(raw_size)) if raw_size is not None else result.size
+        except (TypeError, ValueError):
+            size = result.size
+        return ProviderFileResult(
+            str(item.get("file_name") or result.filename),
+            size,
+            result.links,
+        )
+
+    resolved = await asyncio.gather(*(resolve(item) for item in selected), return_exceptions=True)
+    files = [item for item in resolved if isinstance(item, ProviderFileResult)]
+    unresolved_count = len(resolved) - len(files)
+    if not files:
+        raise DDLException("HubCloud pack loaded, but no file provider links could be resolved")
+
+    total_size = 0
+    for item in entries:
+        try:
+            total_size += int(item.get("file_size") or 0)
+        except (TypeError, ValueError):
+            continue
+    return HubCloudPackResult(
+        filename=str(pack.get("pack_name") or "HubCloud pack"),
+        size=_hubcloud_size(total_size) if total_size else "Unknown size",
+        files=files,
+        file_count=len(entries),
+        unresolved_count=unresolved_count,
+        truncated_count=max(0, len(entries) - len(selected)),
+    )
+
+
+async def hubcloud(url: str) -> ProviderFileResult | HubCloudPackResult:
+    if re.search(r"/drive/packs/[^/?#]+", urlparse(url).path, flags=re.I):
+        return await _hubcloud_pack(url)
+    return await _hubcloud_single(url)

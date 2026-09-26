@@ -14,7 +14,15 @@ from FZBypass.core.publisher_chain import resolve_publisher_chain
 from FZBypass.core.dotflix import dotflix
 from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import gofile, GofileResult
-from FZBypass.core.provider_scrapers import filebee, gdflix, hubcloud, tmbcloud, toonworld_redirect, ProviderFileResult
+from FZBypass.core.provider_scrapers import (
+    filebee,
+    gdflix,
+    hubcloud,
+    tmbcloud,
+    toonworld_redirect,
+    HubCloudPackResult,
+    ProviderFileResult,
+)
 from FZBypass.core.javhdporn import javhdporn
 
 # Dedicated thread pool for heavy browser actions (Playwright).
@@ -498,7 +506,7 @@ async def direct_link_checker(link, onlylink=False):
             f"<i>No Bypass Function Found for your Link :</i> <code>{link}</code>"
         )
 
-    if onlylink or isinstance(blink, (DotflixResult, GofileResult, ProviderFileResult)):
+    if onlylink or isinstance(blink, (DotflixResult, GofileResult, HubCloudPackResult, ProviderFileResult)):
         return blink
 
     links = []

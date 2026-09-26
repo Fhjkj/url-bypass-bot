@@ -22,7 +22,7 @@ from FZBypass import Config, Bypass, BOT_START, LOGGER
 from FZBypass.core.bypass_checker import direct_link_checker, is_excep_link
 from FZBypass.core.dotflix import DotflixResult
 from FZBypass.core.gofile import GofileResult
-from FZBypass.core.provider_scrapers import ProviderFileResult
+from FZBypass.core.provider_scrapers import HubCloudPackResult, ProviderFileResult
 from FZBypass.core.bot_utils import AuthChatsTopics, convert_time, BypassFilter
 from FZBypass.core.social_media import cleanup_social_media, download_social_media, find_social_urls
 
@@ -362,6 +362,29 @@ async def bypass_check(client, message):
                 f"│\n├ 💾 <b>Size :-</b> {size}\n"
                 f"│\n└ 🔗 <b>Links :-</b> {provider_links}"
             )
+        elif isinstance(result, HubCloudPackResult):
+            pack_name = escape(result.filename, quote=True)
+            size = escape(result.size, quote=True)
+            bypassed = (
+                f"📦 <b>Pack :-</b> {pack_name}\n"
+                f"│\n├ 💾 <b>Total Size :-</b> {size}\n"
+                f"│\n└ 📁 <b>Files :-</b> {len(result.files)} of {result.file_count}"
+            )
+            for index, file_result in enumerate(result.files, start=1):
+                filename = escape(file_result.filename, quote=True)
+                file_size = escape(file_result.size, quote=True)
+                provider_links = " | ".join(
+                    f'<a href="{escape(url, quote=True)}">{escape(label)}</a>'
+                    for label, url in file_result.links
+                )
+                bypassed += (
+                    f"\n\n<b>{index}. {filename}</b> ({file_size})\n"
+                    f"{provider_links}"
+                )
+            if result.unresolved_count:
+                bypassed += f"\n\n⚠️ Could not resolve {result.unresolved_count} file(s)."
+            if result.truncated_count:
+                bypassed += f"\n\n⚠️ Showing the first {len(result.files)} of {result.file_count}; pack limit reached."
         elif isinstance(result, list):
             links = [str(item) for item in result]
             bypassed = "\n".join(f"✅ <a href=\"{escape(item, quote=True)}\">{escape(item)}</a>" for item in links)
@@ -370,7 +393,13 @@ async def bypass_check(client, message):
         else:
             result_text = escape(str(result), quote=True)
             bypassed = f"✅ <a href=\"{result_text}\">{result_text}</a>"
-        card_kind = "gofile" if isinstance(result, GofileResult) else "dotflix" if isinstance(result, DotflixResult) else "provider" if isinstance(result, ProviderFileResult) else ""
+        card_kind = (
+            "gofile" if isinstance(result, GofileResult)
+            else "dotflix" if isinstance(result, DotflixResult)
+            else "hubcloud_pack" if isinstance(result, HubCloudPackResult)
+            else "provider" if isinstance(result, ProviderFileResult)
+            else ""
+        )
         parse_data.append((source, bypassed, card_kind))
 
     end = time()
@@ -378,12 +407,26 @@ async def bypass_check(client, message):
     cards = []
     for source, bypassed, card_kind in parse_data:
         if card_kind:
-            cards.append(
-                f"<blockquote>/bypass <a href=\"{source}\">{source}</a></blockquote>\n"
-                f"<blockquote>{bypassed}</blockquote>\n\n"
-                "<blockquote>━━━━━━━✦✗✦━━━━━━━</blockquote>\n\n"
-                "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b></blockquote>"
-            )
+            bodies = [bypassed]
+            if card_kind == "hubcloud_pack" and len(bypassed) > 3000:
+                blocks = bypassed.split("\n\n")
+                bodies = []
+                current = blocks[0]
+                for block in blocks[1:]:
+                    if len(current) + len(block) + 2 > 3000:
+                        bodies.append(current)
+                        current = blocks[0] + "\n\n" + block
+                    else:
+                        current += "\n\n" + block
+                if current:
+                    bodies.append(current)
+            for body in bodies:
+                cards.append(
+                    f"<blockquote>/bypass <a href=\"{source}\">{source}</a></blockquote>\n"
+                    f"<blockquote>{body}</blockquote>\n\n"
+                    "<blockquote>━━━━━━━✦✗✦━━━━━━━</blockquote>\n\n"
+                    "<blockquote><b>Powered By <a href=\"https://t.me/Bypass0_bot\">@Bypass0_bot</a></b></blockquote>"
+                )
         else:
             cards.append(
                 "<blockquote>-\n"
@@ -399,7 +442,16 @@ async def bypass_check(client, message):
     tg_txt = "\n\n".join(cards)
     try:
         if len(tg_txt) > 4000:
-            chunks = [tg_txt[index : index + 3900] for index in range(0, len(tg_txt), 3900)]
+            chunks = []
+            current_chunk = ""
+            for card in cards:
+                if current_chunk and len(current_chunk) + len(card) + 2 > 3900:
+                    chunks.append(current_chunk)
+                    current_chunk = card
+                else:
+                    current_chunk = f"{current_chunk}\n\n{card}" if current_chunk else card
+            if current_chunk:
+                chunks.append(current_chunk)
             await wait_for(message.reply(chunks[0], reply_to_message_id=message.id, parse_mode=ParseMode.HTML, disable_web_page_preview=True), timeout=15)
             for chunk in chunks[1:]:
                 await wait_for(message.reply(chunk, reply_to_message_id=message.id, parse_mode=ParseMode.HTML), timeout=15)
