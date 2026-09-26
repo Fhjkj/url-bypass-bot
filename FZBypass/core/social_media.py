@@ -23,6 +23,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import requests
+from PIL import Image, ImageOps, UnidentifiedImageError
 from yt_dlp import YoutubeDL
 
 from FZBypass.core.proxy_pool import configured_proxies
@@ -79,6 +80,11 @@ def _load_cached(url: str, root: Path, progress: dict[str, float] | None = None)
             destination = root / path.name
             shutil.copy2(path, destination)
             files.append(destination)
+        image_files = _normalise_images([path for path in files if _is_image(path)])
+        if any(_is_image(path) for path in files) and not image_files:
+            shutil.rmtree(entry, ignore_errors=True)
+            return None
+        files = [path for path in files if not _is_image(path)] + image_files
         if progress is not None:
             progress["percent"] = 100.0
         return SocialMediaResult(
@@ -136,6 +142,35 @@ def _flatten_entries(info: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _is_image(path: Path) -> bool:
     return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def _normalise_images(paths: list[Path]) -> list[Path]:
+    """Validate images and convert them to Telegram-safe JPEG files."""
+    normalised: list[Path] = []
+    for path in paths:
+        if not _is_image(path):
+            continue
+        try:
+            with Image.open(path) as source:
+                source.load()
+                image = ImageOps.exif_transpose(source)
+                if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+                    rgba = image.convert("RGBA")
+                    background = Image.new("RGB", rgba.size, "white")
+                    background.paste(rgba, mask=rgba.getchannel("A"))
+                    image = background
+                else:
+                    image = image.convert("RGB")
+                destination = path.with_suffix(".jpg")
+                temporary = destination.with_name(f".{destination.name}.tmp")
+                image.save(temporary, format="JPEG", quality=95, optimize=True)
+            if destination != path:
+                path.unlink(missing_ok=True)
+            temporary.replace(destination)
+            normalised.append(destination)
+        except (OSError, UnidentifiedImageError, ValueError):
+            path.unlink(missing_ok=True)
+    return normalised
 
 
 def _proxy_options(proxy: str | None) -> dict[str, str] | None:
@@ -225,8 +260,13 @@ def _result_from_files(url: str, root: Path, info: dict[str, Any], is_photo_post
             archive.unlink(missing_ok=True)
         except (OSError, zipfile.BadZipFile):
             continue
+    all_files = [
+        path for path in root.rglob("*")
+        if path.is_file() and not path.name.endswith(".part") and path.suffix.lower() != ".zip"
+    ]
+    image_files = _normalise_images([path for path in all_files if _is_image(path)])
     files = sorted(
-        (path for path in root.rglob("*") if path.is_file() and not path.name.endswith(".part") and path.suffix.lower() != ".zip"),
+        [path for path in all_files if not _is_image(path)] + image_files,
         key=lambda path: path.name,
     )
     image_files = [path for path in files if _is_image(path)]
