@@ -168,22 +168,14 @@ async def social_media_photos(client, message):
                 if len(batch) == 1:
                     await _send_social_file(message, batch[0], caption if start == 0 else None, wait_msg, upload_state)
                 else:
-                    media = [
-                        InputMediaPhoto(str(path), caption=caption if index == 0 and start == 0 else None)
-                        for index, path in enumerate(batch)
-                    ]
-                    try:
-                        await client.send_media_group(
-                            chat_id=message.chat.id,
-                            media=media,
-                            reply_to_message_id=message.id,
+                    # Telegram can reject an entire SendMedia album when one
+                    # source image is unusual. Send validated photos separately
+                    # so one bad item cannot turn the whole post into documents.
+                    for index, path in enumerate(batch):
+                        await _send_social_file(
+                            message, path, caption if index == 0 and start == 0 else None,
+                            wait_msg, upload_state, allow_document=False
                         )
-                    except Exception as error:
-                        LOGGER.warning("Telegram photo album upload failed; retrying as documents: %s", error)
-                        for index, path in enumerate(batch):
-                            await _send_social_file(
-                                message, path, caption if index == 0 and start == 0 else None, wait_msg, upload_state, allow_document=False
-                            )
         elif any(path.suffix.lower() in SOCIAL_VIDEO_EXTENSIONS for path in files):
             # Send video files natively like Facebook. Only non-video leftovers
             # use document upload; never wrap a video in an archive-style upload.
