@@ -67,7 +67,7 @@ async def _send_social_video(message, path: Path, caption: str | None = None, wa
         return await message.reply_document(str(path), caption=caption, quote=True, **document_kwargs)
 
 
-async def _send_social_file(message, path: Path, caption: str | None = None, wait_msg=None, upload_state=None):
+async def _send_social_file(message, path: Path, caption: str | None = None, wait_msg=None, upload_state=None, allow_document=True):
     """Prefer a rendered photo, but fall back to a document for Telegram-incompatible bytes."""
     progress_kwargs = {}
     if wait_msg is not None:
@@ -80,7 +80,11 @@ async def _send_social_file(message, path: Path, caption: str | None = None, wai
             try:
                 return await message.reply_photo(str(path), caption=caption, quote=True)
             except Exception as retry_error:
-                LOGGER.warning("Telegram photo upload failed for %s; retrying as document: %s", path, retry_error)
+                LOGGER.warning("Telegram photo upload failed for %s: %s", path, retry_error)
+                if not allow_document:
+                    raise retry_error
+    if not allow_document:
+        raise RuntimeError(f"Telegram rejected image upload: {path.name}")
     return await message.reply_document(str(path), caption=caption, quote=True, **progress_kwargs)
 
 
@@ -147,7 +151,7 @@ async def social_media_photos(client, message):
             for start in range(0, len(files), 10):
                 batch = files[start : start + 10]
                 if len(batch) == 1:
-                    await _send_social_file(message, batch[0], caption if start == 0 else None, wait_msg, upload_state)
+                    await _send_social_file(message, batch[0], caption if start == 0 else None, wait_msg, upload_state, allow_document=False)
                 else:
                     media = [
                         InputMediaDocument(str(path), caption=caption if index == 0 and start == 0 else None)
@@ -178,7 +182,7 @@ async def social_media_photos(client, message):
                         LOGGER.warning("Telegram photo album upload failed; retrying as documents: %s", error)
                         for index, path in enumerate(batch):
                             await _send_social_file(
-                                message, path, caption if index == 0 and start == 0 else None, wait_msg, upload_state
+                                message, path, caption if index == 0 and start == 0 else None, wait_msg, upload_state, allow_document=False
                             )
         elif any(path.suffix.lower() in SOCIAL_VIDEO_EXTENSIONS for path in files):
             # Send video files natively like Facebook. Only non-video leftovers
