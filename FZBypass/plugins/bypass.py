@@ -76,7 +76,11 @@ async def _send_social_file(message, path: Path, caption: str | None = None, wai
         try:
             return await message.reply_photo(str(path), caption=caption, quote=True, **progress_kwargs)
         except Exception as error:
-            LOGGER.warning("Telegram photo upload failed for %s; retrying as document: %s", path, error)
+            LOGGER.warning("Telegram photo upload with progress failed for %s; retrying photo without progress: %s", path, error)
+            try:
+                return await message.reply_photo(str(path), caption=caption, quote=True)
+            except Exception as retry_error:
+                LOGGER.warning("Telegram photo upload failed for %s; retrying as document: %s", path, retry_error)
     return await message.reply_document(str(path), caption=caption, quote=True, **progress_kwargs)
 
 
