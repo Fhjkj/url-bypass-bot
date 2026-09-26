@@ -55,7 +55,7 @@ class SocialMediaResult:
 
 SOCIAL_CACHE_DIR = Path(os.getenv("SOCIAL_MEDIA_CACHE_DIR", "/tmp/fzbypass-social-cache"))
 SOCIAL_CACHE_TTL_SECONDS = max(60, int(os.getenv("SOCIAL_MEDIA_CACHE_TTL_SECONDS", "86400")))
-SOCIAL_CACHE_VERSION = 5
+SOCIAL_CACHE_VERSION = 6
 
 
 def _cache_path(url: str) -> Path:
@@ -367,6 +367,52 @@ def _metadata_photo_download(url: str, root: Path, proxy: str | None, progress: 
     return SocialMediaResult(response.url, "Social media photos", downloaded, True)
 
 
+def _tikwm_photo_download(url: str, root: Path, proxy: str | None, progress: dict[str, float] | None = None) -> SocialMediaResult:
+    """Download TikTok photo slides from TikWM's photo-array response."""
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    timeout = int(os.getenv("TIKWM_TIMEOUT_SECONDS", "20"))
+    response = requests.get(
+        "https://www.tikwm.com/api/",
+        params={"url": url},
+        headers=headers,
+        proxies=_proxy_options(proxy),
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    image_urls = data.get("images") if isinstance(data, dict) else None
+    if not isinstance(image_urls, list) or not image_urls:
+        raise RuntimeError("TikWM did not return a public TikTok photo array")
+    root.mkdir(parents=True, exist_ok=True)
+    downloaded: list[Path] = []
+    for index, image_url in enumerate(image_urls[:50], start=1):
+        if not isinstance(image_url, str) or not image_url.startswith(("http://", "https://")):
+            continue
+        image_response = requests.get(
+            image_url,
+            headers={"User-Agent": headers["User-Agent"], "Referer": "https://www.tikwm.com/"},
+            proxies=_proxy_options(proxy),
+            timeout=timeout,
+        )
+        if image_response.status_code != 200 or not image_response.content:
+            continue
+        destination = root / f"{index:03d}-photo.jpg"
+        destination.write_bytes(image_response.content)
+        downloaded.append(destination)
+        if progress is not None:
+            progress["percent"] = min(99.0, index * 100.0 / max(1, len(image_urls)))
+    if not downloaded:
+        raise RuntimeError("TikWM returned no downloadable TikTok photos")
+    valid_images = _normalise_images(downloaded)
+    if not valid_images:
+        raise RuntimeError("TikWM returned invalid TikTok image bytes")
+    if progress is not None:
+        progress["percent"] = 100.0
+    title = str(data.get("title") or "TikTok Photos")
+    return SocialMediaResult(url, title[:180], valid_images, True)
+
+
 def _download_sync(url: str, root: Path, progress: dict[str, float] | None = None) -> SocialMediaResult:
     last_error: Exception | None = None
     is_tiktok = "tiktok.com" in url.lower()
@@ -374,6 +420,10 @@ def _download_sync(url: str, root: Path, progress: dict[str, float] | None = Non
         try:
             if not is_tiktok:
                 return _yt_dlp_download(url, root, proxy, progress)
+            try:
+                return _tikwm_photo_download(url, root, proxy, progress)
+            except Exception as error:
+                last_error = error
             try:
                 return _yt_dlp_download(url, root, proxy, progress)
             except Exception as error:
