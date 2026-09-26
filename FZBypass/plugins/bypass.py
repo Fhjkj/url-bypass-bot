@@ -16,7 +16,7 @@ from pyrogram.types import (
 )
 from pyrogram.enums import MessageEntityType
 from pyrogram.enums import ParseMode
-from pyrogram.errors import FloodWait, QueryIdInvalid
+from pyrogram.errors import BadRequest, FloodWait, QueryIdInvalid
 
 from FZBypass import Config, Bypass, BOT_START, LOGGER
 from FZBypass.core.bypass_checker import direct_link_checker, is_excep_link
@@ -43,13 +43,37 @@ def _photo_media(path: Path, caption: str | None = None) -> InputMediaPhoto:
 
 
 async def _upload_progress(current: int, total: int, wait_msg, state: dict[str, float], label: str):
-    percent = int(max(0, min(100, current * 100 / total))) if total else 0
+    batch_total = state.get("total_bytes", 0)
+    if batch_total:
+        previous_total = state.get("current_total", 0)
+        previous_current = state.get("current_current", 0)
+        completed = state.get("completed_bytes", 0)
+        # Pyrogram invokes the same callback for every media item in an album.
+        # Detect the next file when its progress resets, its size changes, or
+        # two equally-sized sub-chunk files each complete in a single callback.
+        new_file = previous_total and (
+            total != previous_total
+            or current < previous_current
+            or (
+                previous_current >= previous_total
+                and current >= total
+                and completed + previous_total < batch_total
+            )
+        )
+        if new_file:
+            completed = min(batch_total, completed + previous_total)
+            state["completed_bytes"] = completed
+        state["current_total"] = total
+        state["current_current"] = current
+        percent = int(max(0, min(99, (completed + current) * 100 / batch_total)))
+    else:
+        percent = int(max(0, min(99, current * 100 / total))) if total else 0
     now = monotonic()
+    state["percent"] = max(state.get("percent", 0), percent)
     if now < state.get("disabled_until", 0):
         return
     if now - state.get("updated_at", 0) < SOCIAL_STATUS_EDIT_INTERVAL_SECONDS:
         return
-    state["percent"] = percent
     state["updated_at"] = now
     try:
         await wait_msg.edit(f"<i>⬆️ Uploading {label}... {percent}%</i>")
@@ -66,7 +90,7 @@ async def _send_social_video(message, path: Path, caption: str | None = None, wa
         upload_kwargs = {"progress": _upload_progress, "progress_args": (wait_msg, upload_state or {}, "video")}
     try:
         return await message.reply_video(str(path), caption=caption, quote=True, supports_streaming=True, **upload_kwargs)
-    except Exception as error:
+    except BadRequest as error:
         LOGGER.warning("Telegram video upload failed for %s; retrying as document: %s", path, error)
         document_kwargs = {}
         if wait_msg is not None:
@@ -83,15 +107,10 @@ async def _send_social_file(message, path: Path, caption: str | None = None, wai
         try:
             with path.open("rb") as photo_stream:
                 return await message.reply_photo(photo_stream, caption=caption, quote=True, **progress_kwargs)
-        except Exception as error:
-            LOGGER.warning("Telegram photo upload with progress failed for %s; retrying photo without progress: %s", path, error)
-            try:
-                with path.open("rb") as photo_stream:
-                    return await message.reply_photo(photo_stream, caption=caption, quote=True)
-            except Exception as retry_error:
-                LOGGER.warning("Telegram photo upload failed for %s: %s", path, retry_error)
-                if not allow_document:
-                    raise retry_error
+        except BadRequest as error:
+            LOGGER.warning("Telegram rejected photo upload for %s: %s", path, error)
+            if not allow_document:
+                raise
     if not allow_document:
         raise RuntimeError(f"Telegram rejected image upload: {path.name}")
     return await message.reply_document(str(path), caption=caption, quote=True, **progress_kwargs)
@@ -155,6 +174,13 @@ async def social_media_photos(client, message):
             files = [path for path in files if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS]
         if not files:
             raise RuntimeError("No media files were found")
+        upload_state.update({
+            "total_bytes": sum(path.stat().st_size for path in files),
+            "completed_bytes": 0,
+            "current_total": 0,
+            "current_current": 0,
+            "percent": 0,
+        })
         caption = SOCIAL_PHOTO_CAPTION if photo_post else f"📷 <b>{escape(result.title, quote=True)}</b>\n\n✅ Original source file"
         if SOCIAL_SEND_AS_DOCUMENT and not photo_post:
             for start in range(0, len(files), 10):
@@ -170,6 +196,8 @@ async def social_media_photos(client, message):
                         chat_id=message.chat.id,
                         media=media,
                         reply_to_message_id=message.id,
+                        progress=_upload_progress,
+                        progress_args=(wait_msg, upload_state, "album"),
                     )
         elif all(path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS for path in files):
             for start in range(0, len(files), 10):
@@ -186,8 +214,10 @@ async def social_media_photos(client, message):
                             chat_id=message.chat.id,
                             media=media,
                             reply_to_message_id=message.id,
+                            progress=_upload_progress,
+                            progress_args=(wait_msg, upload_state, "album"),
                         )
-                    except Exception as error:
+                    except BadRequest as error:
                         LOGGER.warning("TikTok photo album upload failed; retrying individual photos: %s", error)
                         for index, path in enumerate(batch):
                             await _send_social_file(
