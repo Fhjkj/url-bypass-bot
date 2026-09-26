@@ -72,7 +72,7 @@ async def _send_social_file(message, path: Path, caption: str | None = None, wai
     progress_kwargs = {}
     if wait_msg is not None:
         progress_kwargs = {"progress": _upload_progress, "progress_args": (wait_msg, upload_state or {}, "photo" if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS else "file")}
-    if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS and not SOCIAL_SEND_AS_DOCUMENT:
+    if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS:
         try:
             return await message.reply_photo(str(path), caption=caption, quote=True, **progress_kwargs)
         except Exception as error:
