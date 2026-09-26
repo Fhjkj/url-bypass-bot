@@ -15,7 +15,7 @@ basicConfig(
 getLogger("pyrogram").setLevel(ERROR)
 LOGGER = getLogger(__name__)
 
-load_dotenv("config.env", override=True)
+load_dotenv("config.env", override=False)
 BOT_START = time()
 
 

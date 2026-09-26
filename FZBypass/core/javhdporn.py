@@ -4,14 +4,13 @@ Clicking .play-button navigates to stripchat.com which loads the HLS
 stream from doppiocdn.net. We intercept the master .m3u8 playlist URL
 the moment it appears in network traffic.
 """
-import os
 import re
-import random
 import time
 import logging
 import httpx
 from FZBypass import Config
 from FZBypass.core.exceptions import DDLException
+from FZBypass.core.proxy_pool import configured_proxies
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,16 +28,7 @@ async def javhdporn(url: str) -> str:
     from playwright.async_api import async_playwright
     global CF_COOKIE_CACHE
 
-    SOLVER_API = os.environ.get("SOLVER_API", Config.SOLVER_API).rstrip("/")
-
-    # Proxy pool for hiding solver API calls (optional)
-    proxy_pool = os.environ.get("BYPASS_PROXY_POOL", "")
-    proxies = [p.strip() for p in proxy_pool.split(",") if p.strip()] if proxy_pool else []
-
-    def get_proxy():
-        if proxies:
-            return random.choice(proxies)
-        return None
+    SOLVER_API = Config.SOLVER_API.rstrip("/")
 
     result = None
     current_time = time.time()
@@ -50,21 +40,24 @@ async def javhdporn(url: str) -> str:
             "user_agent": CF_COOKIE_CACHE["user_agent"],
         }
     else:
-        # Step 2: Rapid external API call with short timeout
-        try:
-            proxy = get_proxy()
-            async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
-                response = await client.post(
-                    f"{SOLVER_API}/solve-challenge",
-                    json={"siteurl": url, "timeout": 30},
-                    timeout=12,
-                )
-                if response.status_code == 200:
-                    result = response.json()
-                else:
-                    raise DDLException(f"External infrastructure returned status: {response.status_code}")
-        except httpx.RequestError:
-            pass
+        # Step 2: Try the shared deployment proxy pool for the external solver,
+        # then direct as a fallback. Compose/host environment is the same for
+        # ToonWorld, social downloads, provider scrapers, and this handler.
+        proxies = configured_proxies()
+        solver_attempts = [*proxies, None] if proxies else [None]
+        for proxy in solver_attempts:
+            try:
+                async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, verify=False) as client:
+                    response = await client.post(
+                        f"{SOLVER_API}/solve-challenge",
+                        json={"siteurl": url, "timeout": 30},
+                        timeout=12,
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+                        break
+            except httpx.RequestError:
+                continue
 
         # Step 3: Local Fallback - use Playwright to decrypt the data-mpu payload
         if not result:
