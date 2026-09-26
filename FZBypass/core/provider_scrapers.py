@@ -210,6 +210,107 @@ async def filebee(url: str) -> ProviderFileResult:
     return ProviderFileResult(raw_title or "FileBee file", size_match.group(1) if size_match else "Unknown size", links)
 
 
+def _is_filepress_host(host: str | None) -> bool:
+    host = (host or "").lower().rstrip(".")
+    return (
+        host in {"filepress.baby", "filepress.lat"}
+        or host.endswith(".filepress.baby")
+        or host.endswith(".filepress.lat")
+    )
+
+
+def _filepress_candidate(domain, hidden: str | None = None) -> str | None:
+    if not isinstance(domain, str) or not domain.strip():
+        return None
+    domain = domain.strip().replace("\\/", "/")
+    if domain.startswith("//"):
+        domain = "https:" + domain
+    parsed = urlparse(domain)
+    if parsed.scheme != "https" or not _is_filepress_host(parsed.hostname):
+        return None
+
+    path = parsed.path.rstrip("/")
+    if hidden and re.fullmatch(r"[A-Za-z0-9_-]{6,128}", hidden.strip()):
+        file_id = quote(hidden.strip(), safe="-_")
+        if path.endswith("/file"):
+            path = f"{path}/{file_id}"
+        elif not path:
+            path = f"/file/{file_id}"
+        elif re.search(r"/file/[A-Za-z0-9_-]{6,128}$", path):
+            pass
+        else:
+            return None
+    elif not re.search(r"/file/[A-Za-z0-9_-]{6,128}$", path):
+        return None
+
+    return parsed._replace(path=path, query="", fragment="").geturl()
+
+
+def _balanced_json_assignment(html: str, variable: str):
+    assignment = re.search(rf"(?:window\.)?{re.escape(variable)}\s*=\s*", html)
+    if not assignment:
+        return None
+    start = html.find("{", assignment.end())
+    if start < 0:
+        return None
+    depth, quoted, escaped = 0, False, False
+    for index in range(start, len(html)):
+        char = html[index]
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+            continue
+        if char == '"':
+            quoted = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return loads(html[start:index + 1])
+                except (TypeError, ValueError):
+                    return None
+    return None
+
+
+def _find_filepress_link(value) -> str | None:
+    if isinstance(value, dict):
+        domain = next(
+            (value.get(key) for key in ("domain", "filePressDomain", "filepressDomain", "url")
+             if isinstance(value.get(key), str)),
+            None,
+        )
+        hidden = next(
+            (value.get(key) for key in ("hidden", "fileId", "file_id", "id")
+             if isinstance(value.get(key), str)),
+            None,
+        )
+        candidate = _filepress_candidate(domain, hidden)
+        if candidate:
+            return candidate
+        # A page variant may expose the complete FilePress link as a value.
+        for child in value.values():
+            if isinstance(child, str):
+                candidate = _filepress_candidate(child)
+                if candidate:
+                    return candidate
+            elif isinstance(child, (dict, list)):
+                candidate = _find_filepress_link(child)
+                if candidate:
+                    return candidate
+    elif isinstance(value, list):
+        for child in value:
+            candidate = _find_filepress_link(child)
+            if candidate:
+                return candidate
+    return None
+
+
 async def toonworld_redirect(url: str) -> str:
     timeout = ClientTimeout(total=30)
     async with ClientSession(timeout=timeout, headers={"User-Agent": "Mozilla/5.0"}) as session:
@@ -217,58 +318,49 @@ async def toonworld_redirect(url: str) -> str:
             html = await response.text(errors="ignore")
             if response.status in {301, 302, 303, 307, 308} and response.headers.get("Location"):
                 location = urljoin(url, response.headers["Location"])
-                parsed = urlparse(location)
-                host = (parsed.hostname or "").lower()
-                if (
-                    parsed.scheme == "https"
-                    and (
-                        host == "filepress.baby"
-                        or host == "filepress.lat"
-                        or host.endswith(".filepress.baby")
-                        or host.endswith(".filepress.lat")
-                    )
-                    and parsed.path.startswith("/file/")
-                ):
+                if _is_filepress_host(urlparse(location).hostname) and urlparse(location).path.startswith("/file/"):
                     return location
-                raise DDLException("ToonWorld returned an ad redirect instead of the embedded FilePress destination")
-    props = re.search(r'window\.__PROPS__\s*=\s*(\{.*?\});', html, flags=re.S)
-    if props:
-        try:
-            payload = loads(props.group(1))
-        except (TypeError, ValueError):
-            payload = {}
-        link = payload.get("link") if isinstance(payload, dict) else None
-        if isinstance(link, dict):
-            domain = link.get("domain")
-            hidden = link.get("hidden")
-            if isinstance(domain, str) and isinstance(hidden, str):
-                parsed = urlparse(domain)
-                host = (parsed.hostname or "").lower()
-                if (
-                    parsed.scheme == "https"
-                    and parsed.path.rstrip("/").endswith("/file")
-                    and (
-                        host == "filepress.baby"
-                        or host == "filepress.lat"
-                        or host.endswith(".filepress.baby")
-                        or host.endswith(".filepress.lat")
-                    )
-                    and re.fullmatch(r"[A-Za-z0-9_-]{6,128}", hidden.strip())
-                ):
-                    return f"{domain.rstrip('/')}/{quote(hidden.strip(), safe='-_')}"
-        # Older pages may put the FilePress URL directly in `destination`.
-        destination = payload.get("destination") if isinstance(payload, dict) else None
-        if isinstance(destination, str):
-            parsed = urlparse(destination)
-            host = (parsed.hostname or "").lower()
-            if parsed.scheme == "https" and (
-                host == "filepress.baby"
-                or host == "filepress.lat"
-                or host.endswith(".filepress.baby")
-                or host.endswith(".filepress.lat")
-            ):
-                return destination
-    raise DDLException("ToonWorld page exposed its ad URL but not the embedded FilePress destination")
+                raise DDLException("ToonWorld returned an ad redirect instead of a FilePress file")
+
+    # Parse balanced JSON rather than ending at the first `};` inside a string
+    # or nested value. The `destination` field is intentionally not preferred:
+    # ToonWorld uses it for a rotating ad shortener while `link` holds FilePress.
+    for variable in ("__PROPS__", "__NEXT_DATA__", "__INITIAL_STATE__"):
+        payload = _balanced_json_assignment(html, variable)
+        candidate = _find_filepress_link(payload)
+        if candidate:
+            return candidate
+
+    # Some page revisions inject JavaScript-like (not strict JSON) props.
+    for link_object in re.findall(r'''(?:link|file)\s*[:=]\s*\{([^{}]*)\}''', html, flags=re.I):
+        domain_match = re.search(
+            r'''(?:domain|filepressDomain|filePressDomain)\s*[:=]\s*["']([^"']+)["']''',
+            link_object,
+            flags=re.I,
+        )
+        file_id_match = re.search(
+            r'''(?:hidden|fileId|file_id)\s*[:=]\s*["']([A-Za-z0-9_-]{6,128})["']''',
+            link_object,
+            flags=re.I,
+        )
+        if domain_match and file_id_match:
+            candidate = _filepress_candidate(domain_match.group(1), file_id_match.group(1))
+            if candidate:
+                return candidate
+
+    # A direct FilePress file URL may also be embedded with escaped slashes.
+    normalized_html = html.replace("\\/", "/")
+    for href in re.findall(r'''https?://[^"'<\s>]+''', normalized_html, flags=re.I):
+        candidate = _filepress_candidate(href.rstrip(")],}"))
+        if candidate:
+            return candidate
+
+    # Some revisions render the destination as a direct link rather than JSON.
+    for href in re.findall(r'''(?:href|data-url)=["']([^"']+)["']''', html, flags=re.I):
+        candidate = _filepress_candidate(urljoin(url, href))
+        if candidate:
+            return candidate
+    raise DDLException("ToonWorld page did not expose a valid embedded FilePress file")
 
 
 async def gdflix(url: str) -> ProviderFileResult:
