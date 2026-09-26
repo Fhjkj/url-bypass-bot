@@ -1,7 +1,8 @@
 from base64 import b64decode
 from asyncio import create_task, gather
+from html import escape
 from re import findall, DOTALL
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse, urlsplit, urlunsplit
 from uuid import uuid4
 
 from bs4 import BeautifulSoup
@@ -17,9 +18,74 @@ from FZBypass.core.exceptions import DDLException
 from FZBypass.core.proxy_pool import configured_proxies
 
 
+def _filepress_html_href(url: str) -> str:
+    parts = urlsplit(url)
+    path = quote(parts.path, safe="/%:@!$&'()*+,;=-._~")
+    query = quote(parts.query, safe="%=&?/:;+,$@!()*'[]-._~")
+    fragment = quote(parts.fragment, safe="%?/:;+,$@!()*'[]-._~")
+    safe_url = urlunsplit((parts.scheme, parts.netloc, path, query, fragment))
+    return escape(safe_url, quote=True)
+
+
+async def _filepress_index_link(
+    sess, file_id: str, source_url: str, proxy: str | None
+) -> str:
+    """Generate the same temporary index URL as FilePress's Download action."""
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "Origin": urlparse(source_url).scheme + "://" + urlparse(source_url).netloc,
+        "Referer": source_url,
+    }
+    request_kwargs = {"headers": headers}
+    if proxy:
+        request_kwargs["proxies"] = {"http": proxy, "https": proxy}
+    raw = urlparse(source_url)
+    api_origin = f"{raw.scheme}://{raw.netloc}/api"
+    initial = await sess.post(
+        f"{api_origin}/file/downlaod/",
+        json={"captchaValue": "", "id": file_id, "method": "indexDownlaod"},
+        **request_kwargs,
+    )
+    if initial.status_code != 200:
+        raise RuntimeError(f"FilePress index request returned HTTP {initial.status_code}")
+    initial_data = initial.json()
+    task_id = (
+        initial_data.get("data")
+        if isinstance(initial_data, dict) and initial_data.get("status")
+        else None
+    )
+    if not isinstance(task_id, str) or not task_id:
+        raise RuntimeError("FilePress did not provide an index task ID")
+
+    final = await sess.post(
+        f"{api_origin}/file/downlaod2/",
+        json={"captchaValue": "", "id": task_id, "method": "indexDownlaod"},
+        **request_kwargs,
+    )
+    if final.status_code != 200:
+        raise RuntimeError(f"FilePress index generation returned HTTP {final.status_code}")
+    final_data = final.json()
+    links = (
+        final_data.get("data")
+        if isinstance(final_data, dict) and final_data.get("status")
+        else None
+    )
+    if isinstance(links, str):
+        links = [links]
+    if not isinstance(links, list):
+        raise RuntimeError("FilePress did not return an index URL")
+    for link in links:
+        if isinstance(link, str) and urlparse(link).scheme in {"http", "https"}:
+            return link
+    raise RuntimeError("FilePress returned no valid index URL")
+
+
 async def filepress(url: str):
     attempts = [None, *configured_proxies()]
     last_error = None
+    telegram_link = None
+    index_link = None
     for proxy in attempts:
         try:
             headers = {
@@ -50,9 +116,16 @@ async def filepress(url: str):
                             last_error = "FilePress Telegram bot was not exposed"
                             continue
                         tg_link = f"https://t.me/{matches[0]}/?start={data}"
-                    parse_txt = f"""┏<b>FilePress:</b> <a href="{url}">Click Here</a>
-┗<b>Telegram:</b> <a href="{tg_link}">Click Here</a>"""
-                    return parse_txt
+                    telegram_link = tg_link
+                    try:
+                        index_link = await _filepress_index_link(sess, file_id, url, proxy)
+                    except Exception as error:
+                        last_error = f"Index link unavailable: {error}"
+                        LOGGER.warning(
+                            "FilePress index generation failed for %s: %s", file_id, error
+                        )
+                        continue
+                    break
                 page = await sess.get(url, **request_kwargs)
                 if page.status_code != 200:
                     last_error = f"HTTP {page.status_code}"
@@ -64,6 +137,15 @@ async def filepress(url: str):
         except Exception as exc:
             last_error = f"{exc.__class__.__name__}: {exc}"
             continue
+    if telegram_link:
+        if index_link:
+            filepress_label = f'<b>Index:</b> <a href="{_filepress_html_href(index_link)}">Click Here</a>'
+        else:
+            filepress_label = (
+                '<b>FilePress Source (Index unavailable):</b> '
+                f'<a href="{_filepress_html_href(url)}">Click Here</a>'
+            )
+        return f"┏{filepress_label}\n┗<b>Telegram:</b> <a href=\"{_filepress_html_href(telegram_link)}\">Click Here</a>"
     raise DDLException(f"FilePress direct/proxy attempts failed: {last_error or 'unknown error'}")
 
 
