@@ -32,7 +32,7 @@ SOCIAL_SEND_AS_DOCUMENT = os.getenv("SOCIAL_SEND_AS_DOCUMENT", "false").lower() 
 SOCIAL_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 SOCIAL_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".ts", ".avi", ".flv"}
 SOCIAL_STATUS_EDIT_INTERVAL_SECONDS = 4.0
-SOCIAL_PHOTO_CAPTION = os.getenv("SOCIAL_PHOTO_CAPTION", "🎵 TikTok Photos\n\n━━━━━━━━━━━━\n\n⚡ Downloaded via @Instasave_downloader_bot")
+SOCIAL_PHOTO_CAPTION = os.getenv("SOCIAL_PHOTO_CAPTION", "🎵 TikTok Photos\n\n━━━━━━━━━━━━\n\n⚡ Downloaded via @Bypass0_bot")
 
 
 async def _upload_progress(current: int, total: int, wait_msg, state: dict[str, float], label: str):
