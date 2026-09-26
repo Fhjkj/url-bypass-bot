@@ -66,6 +66,12 @@ Set `BOT_TOKEN`, `API_ID`, and `API_HASH`. Set `OWNER_ID` for owner-only control
 | `CHROMIUM_PATH` | `/usr/bin/chromium` | Custom Chromium binary path |
 | `SOLVE_TIMEOUT_MS` | `45000` | Navigation timeout per request |
 | `SOLVE_MAX_WAIT_MS` | `90000` | Max time to wait for challenge resolution |
+| `SOLVER_API` | `https://solver-production-fbc1.up.railway.app` | External challenge solver used after direct/proxy retries |
+| `BYPASS_PROXY_POOL` | unset | Comma-separated authenticated proxy URLs; configure only as a private host/deployment secret |
+
+ToonWorld link extraction tries the direct request and then each configured proxy before asking `SOLVER_API` for challenge cookies/HTML. Never place authenticated proxy URLs in the Dockerfile, Compose file, or public repository. Configure the pool once in the deployment platform's private environment/secret settings.
+
+For Docker Compose, copy `docker.env.example` to the ignored `docker.env`, replace the proxy placeholders with the rotated pool, and run `docker compose up -d`. For another host, add `BYPASS_PROXY_POOL` as a private environment secret. The proxy credentials previously committed in the Dockerfile are exposed in the public Git history; revoke/rotate them with the proxy provider before using this build.
 
 ## Run
 

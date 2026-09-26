@@ -1,0 +1,6 @@
+# Private runtime credentials and local Compose overrides
+.env
+.env.*
+!.env.example
+config.env
+docker.env

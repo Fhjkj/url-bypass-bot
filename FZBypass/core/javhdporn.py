@@ -10,6 +10,7 @@ import random
 import time
 import logging
 import httpx
+from FZBypass import Config
 from FZBypass.core.exceptions import DDLException
 
 LOGGER = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ async def javhdporn(url: str) -> str:
     from playwright.async_api import async_playwright
     global CF_COOKIE_CACHE
 
-    SOLVER_API = os.environ.get("SOLVER_API", "https://turnstile-solver-production-edc7.up.railway.app")
+    SOLVER_API = os.environ.get("SOLVER_API", Config.SOLVER_API).rstrip("/")
 
     # Proxy pool for hiding solver API calls (optional)
     proxy_pool = os.environ.get("BYPASS_PROXY_POOL", "")

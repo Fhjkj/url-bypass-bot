@@ -28,6 +28,7 @@ class Config:
         exit(1)
     AUTO_BYPASS = getenv("AUTO_BYPASS", "False").lower() == "true"
     AUTH_CHATS = getenv("AUTH_CHATS", "").split()
+    SOLVER_API = getenv("SOLVER_API", "https://solver-production-fbc1.up.railway.app").rstrip("/")
     OWNER_ID = int(getenv("OWNER_ID", 0))
     MONGODB_URI = getenv("MONGODB_URI", "").strip()
     MONGODB_DATABASE = getenv("MONGODB_DATABASE", "").strip()

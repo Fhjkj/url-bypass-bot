@@ -9,6 +9,7 @@ from aiohttp import ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 
+from FZBypass import Config
 from FZBypass.core.exceptions import DDLException
 from FZBypass.core.proxy_pool import configured_proxies
 
@@ -311,17 +312,11 @@ def _find_filepress_link(value) -> str | None:
     return None
 
 
-async def toonworld_redirect(url: str) -> str:
-    timeout = ClientTimeout(total=30)
-    async with ClientSession(timeout=timeout, headers={"User-Agent": "Mozilla/5.0"}) as session:
-        async with session.get(url, allow_redirects=False, ssl=False) as response:
-            html = await response.text(errors="ignore")
-            if response.status in {301, 302, 303, 307, 308} and response.headers.get("Location"):
-                location = urljoin(url, response.headers["Location"])
-                if _is_filepress_host(urlparse(location).hostname) and urlparse(location).path.startswith("/file/"):
-                    return location
-                raise DDLException("ToonWorld returned an ad redirect instead of a FilePress file")
-
+def _extract_toonworld_filepress(url: str, html: str, location: str | None = None) -> str | None:
+    if location:
+        candidate = _filepress_candidate(urljoin(url, location))
+        if candidate:
+            return candidate
     # Parse balanced JSON rather than ending at the first `};` inside a string
     # or nested value. The `destination` field is intentionally not preferred:
     # ToonWorld uses it for a rotating ad shortener while `link` holds FilePress.
@@ -360,7 +355,145 @@ async def toonworld_redirect(url: str) -> str:
         candidate = _filepress_candidate(urljoin(url, href))
         if candidate:
             return candidate
-    raise DDLException("ToonWorld page did not expose a valid embedded FilePress file")
+    return None
+
+
+def _looks_like_challenge(status: int, html: str) -> bool:
+    text = html.lower()
+    return status in {403, 429, 503} or any(
+        marker in text
+        for marker in (
+            "just a moment",
+            "cf-chl-",
+            "cf-turnstile",
+            "cloudflare",
+            "verify you are human",
+            "checking your browser",
+            "enable javascript and cookies",
+        )
+    )
+
+
+def _cookie_header(cookies, host: str) -> str:
+    if not isinstance(cookies, list):
+        return ""
+    pairs = []
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        name, value = cookie.get("name"), cookie.get("value")
+        domain = str(cookie.get("domain") or "").lstrip(".").lower()
+        if (
+            isinstance(name, str)
+            and name
+            and isinstance(value, str)
+            and (not domain or host == domain or host.endswith("." + domain))
+        ):
+            pairs.append(f"{name}={value}")
+    return "; ".join(pairs)
+
+
+async def _solve_toonworld_challenge(url: str):
+    solver_url = getattr(Config, "SOLVER_API", "").rstrip("/")
+    if not solver_url:
+        return None
+    for proxy in [None, *configured_proxies()]:
+        try:
+            request_kwargs = {}
+            if proxy:
+                request_kwargs["proxy"] = proxy
+            async with ClientSession(timeout=ClientTimeout(total=12)) as session:
+                async with session.post(
+                    f"{solver_url}/solve-challenge",
+                    json={"siteurl": url, "timeout": 30},
+                    **request_kwargs,
+                ) as response:
+                    if response.status != 200:
+                        continue
+                    payload = await response.json(content_type=None)
+                    if isinstance(payload, dict):
+                        return payload
+        except Exception:
+            # Do not include proxy strings in errors/logs; they contain credentials.
+            continue
+    return None
+
+
+async def toonworld_redirect(url: str) -> str:
+    proxies = list(dict.fromkeys([None, *configured_proxies()]))
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    challenged = False
+    last_status = None
+    for proxy in proxies:
+        try:
+            request_headers = dict(headers)
+            request_kwargs = {"allow_redirects": False, "ssl": False}
+            if proxy:
+                request_kwargs["proxy"] = proxy
+            async with ClientSession(
+                timeout=ClientTimeout(total=5), headers=request_headers
+            ) as session:
+                async with session.get(url, **request_kwargs) as response:
+                    html = await response.text(errors="ignore")
+                    status = response.status
+                    location = response.headers.get("Location")
+            last_status = status
+            target = _extract_toonworld_filepress(url, html, location)
+            if target:
+                return target
+            challenged = challenged or _looks_like_challenge(status, html)
+        except Exception:
+            # Do not include proxy strings in errors/logs; they contain credentials.
+            continue
+
+    # A blank or alternate challenge page may not contain recognizable markers;
+    # use the solver after all direct/proxy attempts fail to yield the target.
+    solved = await _solve_toonworld_challenge(url)
+    if solved:
+        solved_html = solved.get("html")
+        if isinstance(solved_html, str):
+            final_url = solved.get("final_url")
+            target = _extract_toonworld_filepress(
+                url, solved_html, final_url if isinstance(final_url, str) else None
+            )
+            if target:
+                return target
+
+        cookie_header = _cookie_header(solved.get("cookies"), urlparse(url).hostname or "")
+        retry_headers = dict(headers)
+        if cookie_header:
+            retry_headers["Cookie"] = cookie_header
+        if isinstance(solved.get("user_agent"), str) and solved["user_agent"]:
+            retry_headers["User-Agent"] = solved["user_agent"]
+        for proxy in proxies:
+            try:
+                request_kwargs = {"allow_redirects": False, "ssl": False}
+                if proxy:
+                    request_kwargs["proxy"] = proxy
+                async with ClientSession(
+                    timeout=ClientTimeout(total=5), headers=retry_headers
+                ) as session:
+                    async with session.get(url, **request_kwargs) as response:
+                        html = await response.text(errors="ignore")
+                        target = _extract_toonworld_filepress(
+                            url, html, response.headers.get("Location")
+                        )
+                        if target:
+                            return target
+            except Exception:
+                continue
+
+    if challenged:
+        raise DDLException("ToonWorld remained blocked after proxy retries and challenge solver")
+    if last_status is not None:
+        raise DDLException(
+            f"ToonWorld did not expose a valid FilePress link after direct/proxy/solver retries (HTTP {last_status})"
+        )
+    raise DDLException("ToonWorld could not be reached directly, through proxies, or via the challenge solver")
 
 
 async def gdflix(url: str) -> ProviderFileResult:

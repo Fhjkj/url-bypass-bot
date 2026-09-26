@@ -6,6 +6,6 @@ services:
     container_name: video-proxy
     ports:
       - "10000:10000"
-    environment:
-      - SOLVER_API=https://turnstile-solver-production-7e59.up.railway.app
+    env_file:
+      - docker.env
     restart: unless-stopped
