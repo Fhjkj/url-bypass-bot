@@ -55,7 +55,7 @@ class SocialMediaResult:
 
 SOCIAL_CACHE_DIR = Path(os.getenv("SOCIAL_MEDIA_CACHE_DIR", "/tmp/fzbypass-social-cache"))
 SOCIAL_CACHE_TTL_SECONDS = max(60, int(os.getenv("SOCIAL_MEDIA_CACHE_TTL_SECONDS", "86400")))
-SOCIAL_CACHE_VERSION = 3
+SOCIAL_CACHE_VERSION = 4
 
 
 def _cache_path(url: str) -> Path:
@@ -88,14 +88,18 @@ def _load_cached(url: str, root: Path, progress: dict[str, float] | None = None)
         if any(_is_image(path) for path in files) and not image_files:
             shutil.rmtree(entry, ignore_errors=True)
             return None
-        files = [path for path in files if not _is_image(path)] + image_files
+        is_photo_post = bool(manifest.get("is_photo_post"))
+        files = image_files if is_photo_post else [path for path in files if not _is_image(path)] + image_files
+        if not files:
+            shutil.rmtree(entry, ignore_errors=True)
+            return None
         if progress is not None:
             progress["percent"] = 100.0
         return SocialMediaResult(
             source_url=str(manifest.get("source_url") or url),
             title=str(manifest.get("title") or "Social media media"),
             files=files,
-            is_photo_post=bool(manifest.get("is_photo_post")),
+            is_photo_post=is_photo_post,
         )
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return None

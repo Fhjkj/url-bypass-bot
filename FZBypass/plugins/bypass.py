@@ -32,6 +32,7 @@ SOCIAL_SEND_AS_DOCUMENT = os.getenv("SOCIAL_SEND_AS_DOCUMENT", "false").lower() 
 SOCIAL_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 SOCIAL_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".ts", ".avi", ".flv"}
 SOCIAL_STATUS_EDIT_INTERVAL_SECONDS = 4.0
+SOCIAL_PHOTO_CAPTION = os.getenv("SOCIAL_PHOTO_CAPTION", "🎵 TikTok Photos\n\n━━━━━━━━━━━━\n\n⚡ Downloaded via @Instasave_downloader_bot")
 
 
 async def _upload_progress(current: int, total: int, wait_msg, state: dict[str, float], label: str):
@@ -131,10 +132,12 @@ async def social_media_photos(client, message):
         except Exception:
             pass
         files = result.files[:SOCIAL_MAX_FILES]
+        if result.is_photo_post:
+            files = [path for path in files if path.suffix.lower() in SOCIAL_PHOTO_EXTENSIONS]
         if not files:
             raise RuntimeError("No media files were found")
 
-        caption = f"📷 <b>{escape(result.title, quote=True)}</b>\n\n✅ Original source file"
+        caption = SOCIAL_PHOTO_CAPTION if result.is_photo_post else f"📷 <b>{escape(result.title, quote=True)}</b>\n\n✅ Original source file"
         if SOCIAL_SEND_AS_DOCUMENT and not result.is_photo_post:
             for start in range(0, len(files), 10):
                 batch = files[start : start + 10]
