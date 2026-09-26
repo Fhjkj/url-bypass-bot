@@ -1,7 +1,9 @@
 from base64 import b64decode
-from asyncio import create_task, gather
+from asyncio import create_task, gather, sleep as asleep
 from html import escape
+import os
 from re import findall, DOTALL
+from time import monotonic
 from urllib.parse import quote, urlparse, urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -17,6 +19,10 @@ from FZBypass.core.bot_utils import get_dl
 from FZBypass.core.exceptions import DDLException
 from FZBypass.core.proxy_pool import configured_proxies
 
+FILEPRESS_CLOUD_TIMEOUT_SECONDS = min(
+    120, max(0, int(os.getenv("FILEPRESS_CLOUD_TIMEOUT_SECONDS", "90")))
+)
+
 
 def _filepress_html_href(url: str) -> str:
     parts = urlsplit(url)
@@ -27,58 +33,110 @@ def _filepress_html_href(url: str) -> str:
     return escape(safe_url, quote=True)
 
 
-async def _filepress_index_link(
-    sess, file_id: str, source_url: str, proxy: str | None
-) -> str:
-    """Generate the same temporary index URL as FilePress's Download action."""
+async def _filepress_api_post(
+    sess, source_url: str, body: dict, proxy: str | None,
+    endpoint: str = "downlaod/",
+):
+    """Send a FilePress frontend API request using the current host and proxy."""
+    raw = urlparse(source_url)
     headers = {
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
-        "Origin": urlparse(source_url).scheme + "://" + urlparse(source_url).netloc,
+        "Origin": f"{raw.scheme}://{raw.netloc}",
         "Referer": source_url,
     }
     request_kwargs = {"headers": headers}
     if proxy:
         request_kwargs["proxies"] = {"http": proxy, "https": proxy}
-    raw = urlparse(source_url)
     api_origin = f"{raw.scheme}://{raw.netloc}/api"
-    initial = await sess.post(
-        f"{api_origin}/file/downlaod/",
-        json={"captchaValue": "", "id": file_id, "method": "indexDownlaod"},
+    response = await sess.post(
+        f"{api_origin}/file/{endpoint}",
+        json=body,
         **request_kwargs,
     )
-    if initial.status_code != 200:
-        raise RuntimeError(f"FilePress index request returned HTTP {initial.status_code}")
-    initial_data = initial.json()
-    task_id = (
-        initial_data.get("data")
-        if isinstance(initial_data, dict) and initial_data.get("status")
-        else None
+    if response.status_code != 200:
+        raise RuntimeError(f"FilePress API returned HTTP {response.status_code}")
+    result = response.json()
+    if not isinstance(result, dict) or not result.get("status"):
+        detail = result.get("error") if isinstance(result, dict) else None
+        raise RuntimeError(str(detail or "FilePress API rejected the request"))
+    return result.get("data")
+
+
+async def _filepress_index_link(sess, file_id: str, source_url: str, proxy: str | None) -> str:
+    """Generate the same temporary index URL as FilePress's Download action."""
+    task_id = await _filepress_api_post(
+        sess, source_url,
+        {"captchaValue": "", "id": file_id, "method": "indexDownlaod"},
+        proxy,
     )
     if not isinstance(task_id, str) or not task_id:
         raise RuntimeError("FilePress did not provide an index task ID")
-
-    final = await sess.post(
-        f"{api_origin}/file/downlaod2/",
-        json={"captchaValue": "", "id": task_id, "method": "indexDownlaod"},
-        **request_kwargs,
-    )
-    if final.status_code != 200:
-        raise RuntimeError(f"FilePress index generation returned HTTP {final.status_code}")
-    final_data = final.json()
-    links = (
-        final_data.get("data")
-        if isinstance(final_data, dict) and final_data.get("status")
-        else None
+    links = await _filepress_api_post(
+        sess, source_url,
+        {"captchaValue": "", "id": task_id, "method": "indexDownlaod"},
+        proxy, endpoint="downlaod2/",
     )
     if isinstance(links, str):
         links = [links]
-    if not isinstance(links, list):
-        raise RuntimeError("FilePress did not return an index URL")
-    for link in links:
-        if isinstance(link, str) and urlparse(link).scheme in {"http", "https"}:
-            return link
-    raise RuntimeError("FilePress returned no valid index URL")
+    if isinstance(links, list):
+        for link in links:
+            if isinstance(link, str) and urlparse(link).scheme in {"http", "https"}:
+                return link
+    raise RuntimeError("FilePress did not return an index URL")
+
+
+async def _filepress_instant_link(sess, file_id: str, source_url: str, proxy: str | None) -> str:
+    """Generate FilePress's Instant Download link (Google Drive delivery)."""
+    task_id = await _filepress_api_post(
+        sess, source_url,
+        {"captchaValue": "", "id": file_id, "method": "publicDownlaod"},
+        proxy,
+    )
+    if not isinstance(task_id, str) or not task_id:
+        raise RuntimeError("FilePress did not provide an Instant Download task ID")
+    drive_id = await _filepress_api_post(
+        sess, source_url,
+        {"captchaValue": "", "id": task_id, "method": "publicDownlaod"},
+        proxy, endpoint="downlaod2/",
+    )
+    if not isinstance(drive_id, str) or not drive_id or "/" in drive_id:
+        raise RuntimeError("FilePress did not return a Google Drive file ID")
+    return f"https://drive.google.com/uc?id={quote(drive_id, safe='')}"
+
+
+async def _filepress_cloud_link(sess, file_id: str, source_url: str, proxy: str | None) -> str:
+    """Wait for FilePress Cloud R2 processing, then generate its final URL."""
+    deadline = monotonic() + FILEPRESS_CLOUD_TIMEOUT_SECONDS
+    state = await _filepress_api_post(
+        sess, source_url,
+        {"captchaValue": "", "id": file_id, "method": "cloudR2Downlaod"},
+        proxy,
+    )
+    while isinstance(state, dict) and not state.get("downloadId"):
+        status = str(state.get("status") or "").lower()
+        if status in {"failed", "download_error", "cannot_be_downloaded"}:
+            raise RuntimeError(f"FilePress Cloud task {status.replace('_', ' ')}")
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise TimeoutError("FilePress Cloud is still processing")
+        await asleep(min(3, remaining))
+        state = await _filepress_api_post(
+            sess, source_url,
+            {"captchaValue": "", "id": file_id, "method": "cloudR2Downlaod"},
+            proxy,
+        )
+    download_id = state.get("downloadId") if isinstance(state, dict) else None
+    if not isinstance(download_id, str) or not download_id:
+        raise RuntimeError("FilePress did not provide a Cloud download ID")
+    link = await _filepress_api_post(
+        sess, source_url,
+        {"captchaValue": "", "id": download_id, "method": "cloudR2Downlaod"},
+        proxy, endpoint="downlaod2/",
+    )
+    if isinstance(link, str) and urlparse(link).scheme in {"http", "https"}:
+        return link
+    raise RuntimeError("FilePress did not return a Cloud download URL")
 
 
 async def filepress(url: str):
@@ -86,6 +144,9 @@ async def filepress(url: str):
     last_error = None
     telegram_link = None
     index_link = None
+    instant_link = None
+    cloud_link = None
+    cloud_pending = False
     for proxy in attempts:
         try:
             headers = {
@@ -117,14 +178,28 @@ async def filepress(url: str):
                             continue
                         tg_link = f"https://t.me/{matches[0]}/?start={data}"
                     telegram_link = tg_link
-                    try:
-                        index_link = await _filepress_index_link(sess, file_id, url, proxy)
-                    except Exception as error:
-                        last_error = f"Index link unavailable: {error}"
-                        LOGGER.warning(
-                            "FilePress index generation failed for %s: %s", file_id, error
-                        )
-                        continue
+                    # Generate each route independently: one unavailable method
+                    # must not hide the others or turn a valid page into failure.
+                    results = await gather(
+                        _filepress_index_link(sess, file_id, url, proxy),
+                        _filepress_instant_link(sess, file_id, url, proxy),
+                        _filepress_cloud_link(sess, file_id, url, proxy),
+                        return_exceptions=True,
+                    )
+                    index_link, instant_link, cloud_link = (
+                        result if isinstance(result, str) else None
+                        for result in results
+                    )
+                    for label, result in zip(
+                        ("Index", "Instant", "Cloud"), results
+                    ):
+                        if isinstance(result, BaseException):
+                            if label == "Cloud" and isinstance(result, TimeoutError):
+                                cloud_pending = True
+                            LOGGER.warning(
+                                "FilePress %s link generation failed for %s: %s",
+                                label, file_id, result,
+                            )
                     break
                 page = await sess.get(url, **request_kwargs)
                 if page.status_code != 200:
@@ -138,14 +213,22 @@ async def filepress(url: str):
             last_error = f"{exc.__class__.__name__}: {exc}"
             continue
     if telegram_link:
+        options = []
         if index_link:
-            filepress_label = f'<b>Index:</b> <a href="{_filepress_html_href(index_link)}">Click Here</a>'
+            options.append(f'<b>Index:</b> <a href="{_filepress_html_href(index_link)}">Click Here</a>')
         else:
-            filepress_label = (
+            options.append(
                 '<b>FilePress Source (Index unavailable):</b> '
                 f'<a href="{_filepress_html_href(url)}">Click Here</a>'
             )
-        return f"┏{filepress_label}\n┗<b>Telegram:</b> <a href=\"{_filepress_html_href(telegram_link)}\">Click Here</a>"
+        if instant_link:
+            options.append(f'<b>Instant Download:</b> <a href="{_filepress_html_href(instant_link)}">Click Here</a>')
+        if cloud_link:
+            options.append(f'<b>Cloud Download:</b> <a href="{_filepress_html_href(cloud_link)}">Click Here</a>')
+        elif cloud_pending:
+            options.append('<b>Cloud Download:</b> Still processing — try again shortly')
+        options.append(f'<b>Telegram:</b> <a href="{_filepress_html_href(telegram_link)}">Click Here</a>')
+        return "┏" + "\n┣".join(options)
     raise DDLException(f"FilePress direct/proxy attempts failed: {last_error or 'unknown error'}")
 
 
